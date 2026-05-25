@@ -2,14 +2,17 @@ pipeline {
     agent any
 
     environment {
-        CONFIG_FILE = "pipeline-config/app.yaml"
+        CONFIG_FILE = "python/pipeline-config/app.yaml"
     }
 
     stages {
 
         stage('Checkout') {
             steps {
-                checkout scm
+                sh '''
+                    rm -rf app-source || true
+                    git clone /home/vansh.padia/Videos/DevSecops/python app-source
+                '''
             }
         }
 
