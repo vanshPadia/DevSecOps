@@ -1,0 +1,11 @@
+app:
+  name: python-demo
+  type: python
+  runtime: python3
+
+build:
+  install: "pip3 install -r requirements.txt"
+
+deploy:
+  start: "nohup python3 app/app.py > app.log 2>&1 &"
+  port: 5000
