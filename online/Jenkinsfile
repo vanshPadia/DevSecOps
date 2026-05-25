@@ -11,7 +11,7 @@ pipeline {
             steps {
                 sh '''
                     rm -rf app-source || true
-                    git clone /home/vansh.padia/Videos/DevSecops/python app-source
+                    git clone https://github.com/vanshPadia/DevSecOps.git
                 '''
             }
         }
