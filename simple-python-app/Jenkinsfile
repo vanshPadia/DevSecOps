@@ -11,7 +11,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 echo 'Checking out code...'
-                checkout scm
+                sh 'git clone https://github.com/your-username/your-repo.git .'
             }
         }
 
