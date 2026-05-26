@@ -1,0 +1,9 @@
+FROM python:slim-trixie
+
+WORKDIR /app
+
+COPY app.py .
+
+# COPY .env .
+
+CMD [ "python", "app.py" ]

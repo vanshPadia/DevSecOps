@@ -1,0 +1,67 @@
+variables:
+  IMAGE_TAG: "$CI_COMMIT_SHORT_SHA"
+  
+default:
+  tags:
+    - ibsrunner
+
+stages:
+  - scan_config
+  - build
+  - scan
+  - push
+
+scan_config_with_trivy:
+  stage: scan_config
+  image:
+    name: aquasec/trivy:canary
+    entrypoint: [""]
+
+  script:
+    - echo "Scanning config file for secret..."
+    - trivy fs -c Training/vansh/scan.yml Training/vansh
+  after_script:
+    - echo "config file having secret"
+    - cat trivy-report.txt
+  rules: 
+    - when: manual
+
+build_image:
+  stage: build
+  image: $DOCKER_IMAGE
+  needs:
+   - job: scan_config_with_trivy
+  script:
+    - Training/vansh/scripts/docker_build.sh
+
+  rules: 
+    - when: on_success
+
+scan_image_with_trivy:
+  stage: scan
+  image:
+    name: aquasec/trivy:canary
+    entrypoint: [""]
+  needs:
+    - job: build_image
+  
+  script:
+    - echo "Scanning image for CRITICAL vulnerabilities..."
+    - trivy image -c Training/vansh/trivy.yml "testimage:$IMAGE_TAG"
+  
+  after_script:
+    - cat trivy-report.txt
+
+  rules: 
+    - when: on_success
+
+push_to_ecr:
+  stage: push
+  image: $DOCKER_IMAGE
+  needs:
+    - job: scan_image_with_trivy 
+  script:
+    - Training/vansh/scripts/aws_push.sh
+
+  rules:
+    - when: on_success

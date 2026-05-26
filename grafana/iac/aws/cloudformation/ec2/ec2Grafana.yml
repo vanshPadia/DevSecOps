@@ -1,0 +1,115 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CloudFormation template to create a grafana ec2.
+
+Parameters:
+  environment:
+    Description: environment type
+    Type: String
+    AllowedValues:
+      - dev
+      - prod
+      - staging
+
+  service:
+    Description: Name of the service running in the instance
+    Type: String
+    Default: grafana
+
+  slackUrl:
+    Description: webhook of the slack 
+    Type: String
+
+  keyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: String
+    ConstraintDescription: Must be the name of an existing EC2 KeyPair.
+
+Mappings:
+  envMap:
+    dev:
+      InstanceType: t2.micro
+      ImageId: ami-00bb6a80f01f03502
+    prod:
+      InstanceType: t2.micro
+      ImageId: ami-00bb6a80f01f03502
+    staging:
+      InstanceType: t2.micro
+      ImageId: ami-00bb6a80f01f03502
+
+Resources:
+  grafanaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for openVpn allowing SSH and https access
+      VpcId: !ImportValue vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 9090
+          ToPort: 9090
+          CidrIp: !ImportValue vpcCidir
+
+      Tags:
+        - Key: Name
+          Value: !Sub ${environment}-${service}-securityGroup
+
+  grafanaInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !FindInMap [envMap, !Ref environment, InstanceType]
+      ImageId: !FindInMap [envMap, !Ref environment, ImageId]
+      SubnetId: !ImportValue publicSubnet1
+      SecurityGroupIds:
+        - !Ref grafanaSecurityGroup
+      KeyName: !Ref keyName
+      Tags:
+        - Key: Name
+          Value: !Sub ${environment}-${service}-ec2
+      UserData: !Base64 
+        Fn::Sub:
+            - |-              
+              #!/bin/bash
+              apt update
+              apt install -y docker.io docker-compose
+
+              echo "Waiting for docker-compose.yml from Jenkins..." >> /var/log/userdata.log
+              while [ ! -f /home/ubuntu/vansh/docker-compose.yml ]; do
+                sleep 60
+              done
+              echo "docker-compose.yml found. Proceeding..." >> /var/log/userdata.log
+
+              cd /home/ubuntu/vansh
+              
+              TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+
+              INSTANCE_ID=$(curl --silent -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+
+              export ID=$INSTANCE_ID
+              
+              sed -i "s/\"InstanceId\": \".*\"/\"InstanceId\": \"$ID\"/g" grafana-config/provisioning/dashboards/ec2-dashboard.json
+              sed -i "s/\InstanceId: \.*/\InstanceId: $ID/g" grafana-config/provisioning/alerting/alert-rules.yaml
+              echo "url=${slackUrl}" >> .env
+              cd docker         
+              docker-compose up -d
+            - slackUrl: !Ref slackUrl
+              environment: !Ref environment
+              service: !Ref service            
+
+
+
+
+Outputs:
+  grafanaSecurityGroupId:
+    Description: The Security Group ID for ec2
+    Value: !Ref grafanaSecurityGroup
+    Export:
+      Name: !Sub "${environment}-${service}-SecurityGroup"
+
+  grafanaInstanceId:
+    Description: The Instance ID of ${service}-ec2
+    Value: !Ref grafanaInstance
+    Export:
+      Name: !Sub "${environment}-${service}-ec2"

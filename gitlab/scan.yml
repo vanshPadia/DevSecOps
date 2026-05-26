@@ -1,0 +1,9 @@
+secret:
+
+  config: Training/vansh/config/trivy-secret.yaml
+  
+exit-code: 1
+
+format: table #sarif table  #json
+
+output: trivy-report.txt

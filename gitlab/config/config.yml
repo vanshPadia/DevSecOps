@@ -1,0 +1,14 @@
+# gitlab.yml
+development:
+  # This is a public key, no secret here
+  ssh_host_key: |
+    -----BEGIN OPENSSH PRIVATE KEY-----
+    ...
+    -----END OPENSSH PRIVATE KEY-----
+
+  database:
+    adapter: postgresql
+    encoding: unicode
+    database: gitlabhq_development
+    password: 'supersecret_database_password_123' 
+    tst: 'amsj123@34_#$%'

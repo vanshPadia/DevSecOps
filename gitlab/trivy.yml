@@ -1,0 +1,26 @@
+severity:
+  - CRITICAL
+scan:
+  security-checks:
+    - vuln
+    - config
+    - secret
+secret:
+
+  config: Training/vansh/config/trivy-secret.yaml
+
+vulnerability:
+ 
+  ignore-unfixed: true
+
+exit-code: 1
+
+format: table #sarif table  #json
+
+output: trivy-report.txt
+
+
+
+
+
+

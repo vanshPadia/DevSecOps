@@ -1,0 +1,34 @@
+include:
+  - local: ".gitlab-ci/templates/.gitlab-ci.env.yml"
+  
+stages:
+  - build
+  - deploy
+
+default:
+  tags:
+    - trecster_runner
+
+variables:
+  ECR_REGISTRY: "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+  IMAGE_TAG: "${CI_COMMIT_SHA}"
+  DOCUMENT_NAME: "dev-Trecster-backend-deploy"
+  IMAGE_NAME: "${ECR_REGISTRY}/dev-trecster-ecr"
+
+build:
+  stage: build
+  extends: .aws-cli
+  script:
+    - ./.gitlab-ci/scripts/dockerBuild.sh
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+
+deploy:
+  stage: deploy
+  extends: .aws-cli
+  needs:
+    - build
+  script:
+    - ./.gitlab-ci/scripts/ssmDeploy.sh
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'

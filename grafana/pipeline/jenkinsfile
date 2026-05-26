@@ -1,0 +1,53 @@
+pipeline {
+    agent any
+
+    environment {
+
+        AWS_ACCESS_KEY_ID     = credentials('aws-access-key-id')
+        AWS_SECRET_ACCESS_KEY = credentials('aws-secret-access-key')
+        AWS_SESSION_TOKEN     = credentials('aws-session-token')
+        AWS_REGION = 'ap-south-1'
+    }
+     
+        
+    stages {
+        stage('Deploy EC2') {
+            steps {
+                withFolderProperties {
+
+                        cfnUpdate(
+                            stack: "${env.environment}-${env.service}",
+                            file: 'Training/vansh/iac/aws/cloudformation/ec2/ec2Grafana.yml',
+                            params: [
+                                environment: env.environment,
+                                service: env.service,
+                                keyName: env.keyName,
+                                slackUrl: env.slackUrl                         
+                            ],
+                            timeoutInMinutes: 30
+                        )
+
+                }
+            }
+        }
+        stage('copy my code to ec2') {
+            steps {
+                sh '''
+                    echo "Sending folder to EC2..."
+                    EC2_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=dev-grafana-ec2" --query "Reservations[*].Instances[*].PublicIpAddress" --profile vansh-impressico --output text)
+                    scp -o StrictHostKeyChecking=no -i /var/lib/jenkins/my-key1.pem -r Training/vansh ubuntu@$EC2_IP:/home/ubuntu
+                '''   
+            }
+        }
+                     
+    }
+    post {
+        success {
+            echo "Deployment successful!"
+        }
+        always{
+            cleanWs()
+        }
+    }
+
+}
