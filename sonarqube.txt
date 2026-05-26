@@ -1,0 +1,5 @@
+sonar-scanner \
+  -Dsonar.projectKey=simple-python-app \
+  -Dsonar.sources=. \
+  -Dsonar.host.url=http://localhost:9000 \
+  -Dsonar.login=sqp_6276249242360f606164ac23366afad02e14da87

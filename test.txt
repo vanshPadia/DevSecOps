@@ -1,0 +1,2646 @@
+Claude finished the response
+
+hello
+6:28 pm
+
+Hey Vansh! How's it going? What are you working on today?
+
+i want to create 5 running projet , with simple application , 
+
+    python application + docker +jenkins +sast tools (trivy , sonarqube, dependency check and unit test )
+    node +docker +jenkins +sast tools +dast tools
+    java +docker + offline jenkins +sast +dast +it will run in offline setup server there is no inter net
+    there is one senerio i will tell you later
+    gitlab project this i have first i want to create simple applicaican and simple jenkins without and sast and dast
+
+i want proper commends to create a local jenkins and also want to run the application on loal by the help of docker 
+can you help me to create this step by step properly one by one , 
+we will start creating 1 application try to deploy with simple jenkis pipeline first and adter that we can add some sast tools . first understand this , help me to understand this also .
+6:38 pm
+
+Got it, Vansh. Let me make sure I understand the full plan before we start.
+
+The 5 projects (your roadmap):
+#	Stack	Pipeline	Security
+1	Python + Docker	Jenkins	SAST (Trivy, SonarQube, Dependency Check, Unit Test)
+2	Node + Docker	Jenkins	SAST + DAST
+3	Java + Docker	Jenkins (offline)	SAST + DAST (no internet)
+4	TBD	TBD	TBD
+5	GitLab	GitLab CI	TBD
+
+Your immediate goal — Project 1, Phase 1:
+
+    Create a simple Python app
+    Dockerize it
+    Run Jenkins locally via Docker
+    Write a basic Jenkinsfile pipeline (no SAST yet) — just build + run the container
+    Verify it works end to end
+
+Once that baseline works, we layer in Trivy → SonarQube → Dependency Check → Unit Tests one by one.
+
+Before I give you the commands, a couple of quick questions:
+
+Q: What OS are you working on locally?
+A: Ubuntu/Linux
+
+Q: Do you already have Docker installed locally?
+A: Yes, Docker is running
+6:38 pm
+
+Perfect. Let's start clean and build this step by step.
+Project 1 — Phase 1 Plan
+
+What we're building:
+
+simple-python-app/
+├── app.py
+├── requirements.txt
+├── Dockerfile
+└── Jenkinsfile
+
+A simple Flask app → Dockerized → Built and run via a local Jenkins pipeline.
+Step 1 — Create the Python App
+
+Run these commands:
+bash
+
+mkdir simple-python-app && cd simple-python-app
+
+app.py
+bash
+
+cat > app.py << 'EOF'
+from flask import Flask
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Hello from Python App - v1.0"
+
+@app.route("/health")
+def health():
+    return {"status": "ok"}, 200
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
+EOF
+
+requirements.txt
+bash
+
+cat > requirements.txt << 'EOF'
+flask==3.0.3
+EOF
+
+Step 2 — Dockerize the App
+
+Dockerfile
+bash
+
+cat > Dockerfile << 'EOF'
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app.py .
+
+EXPOSE 5000
+
+CMD ["python", "app.py"]
+EOF
+
+Test it manually first (without Jenkins):
+bash
+
+# Build the image
+docker build -t simple-python-app:latest .
+
+# Run it
+docker run -d -p 5000:5000 --name python-app simple-python-app:latest
+
+# Test it
+curl http://localhost:5000
+curl http://localhost:5000/health
+
+# Clean up
+docker stop python-app && docker rm python-app
+
+You should see Hello from Python App - v1.0 in the output.
+Step 3 — Set Up Local Jenkins via Docker
+
+This runs Jenkins as a container, with Docker-in-Docker capability so Jenkins can build Docker images.
+
+Create a Jenkins bridge network:
+bash
+
+docker network create jenkins
+
+Run Jenkins:
+bash
+
+docker run -d \
+  --name jenkins \
+  --network jenkins \
+  -p 8080:8080 \
+  -p 50000:50000 \
+  -v jenkins_home:/var/jenkins_home \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  jenkins/jenkins:lts
+
+The -v /var/run/docker.sock line gives Jenkins access to your host Docker — so Jenkins can build and run containers.
+
+Get the initial admin password:
+bash
+
+docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
+
+Then open: http://localhost:8080 and complete the setup wizard.
+
+    Paste the password
+    Click "Install suggested plugins"
+    Create your admin user
+
+Step 4 — Install Docker CLI inside Jenkins container
+
+Jenkins needs the Docker CLI to run docker commands in your pipeline:
+bash
+
+docker exec -u root jenkins bash -c "
+  apt-get update &&
+  apt-get install -y docker.io &&
+  usermod -aG docker jenkins
+"
+
+# Restart Jenkins container to apply group change
+docker restart jenkins
+
+Step 5 — Create the Jenkinsfile
+
+Back in your simple-python-app/ folder:
+bash
+
+cat > Jenkinsfile << 'EOF'
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME = "simple-python-app"
+        IMAGE_TAG  = "latest"
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                echo 'Checking out code...'
+                checkout scm
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                echo 'Building Docker image...'
+                sh 'docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .'
+            }
+        }
+
+        stage('Run Container') {
+            steps {
+                echo 'Running container...'
+                sh '''
+                    docker stop ${IMAGE_NAME} || true
+                    docker rm ${IMAGE_NAME} || true
+                    docker run -d -p 5000:5000 --name ${IMAGE_NAME} ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                echo 'Running health check...'
+                sh 'sleep 3 && curl -f http://localhost:5000/health'
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Pipeline completed successfully!'
+        }
+        failure {
+            echo 'Pipeline failed.'
+        }
+    }
+}
+EOF
+
+Step 6 — Push to Git and Create Jenkins Job
+
+Initialize a local git repo:
+bash
+
+git init
+git add .
+git commit -m "initial commit - simple python app"
+
+You can push to a GitHub/GitLab repo, or for local testing use a Pipeline script directly in Jenkins (paste the Jenkinsfile contents into the job).
+
+In Jenkins UI:
+
+    New Item → Pipeline → name it simple-python-app
+    Pipeline section → select "Pipeline script from SCM" (if using Git) or "Pipeline script" (paste directly)
+    Save → Build Now
+
+What's Next (Phase 2)
+
+Once this pipeline runs clean, we'll add:
+
+    Unit Tests — pytest
+    Trivy — Docker image vulnerability scan
+    SonarQube — code quality (runs as a container too)
+    OWASP Dependency Check — known CVEs in packages
+
+Start with Steps 1 and 2 (build and run the app manually with Docker). Let me know what output you get and we'll move to Jenkins setup.
+
+i want to stop running jenkins in my server first
+6:39 pm
+
+Run this:
+bash
+
+docker stop jenkins && docker rm jenkins
+
+If you also want to remove the Jenkins data volume (clean slate):
+bash
+
+docker volume rm jenkins_home
+
+To verify everything is gone:
+bash
+
+docker ps -a | grep jenkins
+docker volume ls | grep jenkins
+
+No output means it's fully cleaned up. Let me know when done.
+
+in my local without docker
+6:40 pm
+
+To install Jenkins directly on Ubuntu without Docker:
+Install Jenkins Locally on Ubuntu
+
+Step 1 — Install Java (Jenkins requires Java 17 or 21)
+bash
+
+sudo apt update
+sudo apt install -y fontconfig openjdk-21-jre
+java -version
+
+Step 2 — Add Jenkins repo and install
+bash
+
+sudo wget -O /usr/share/keyrings/jenkins-keyring.asc \
+  https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
+
+echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] \
+  https://pkg.jenkins.io/debian-stable binary/" | \
+  sudo tee /etc/apt/sources.list.d/jenkins.list > /dev/null
+
+sudo apt update
+sudo apt install -y jenkins
+
+Step 3 — Start Jenkins
+bash
+
+sudo systemctl enable jenkins
+sudo systemctl start jenkins
+sudo systemctl status jenkins
+
+Step 4 — Get initial admin password
+bash
+
+sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+
+Step 5 — Open in browser
+
+http://localhost:8080
+
+To stop Jenkins anytime:
+bash
+
+sudo systemctl stop jenkins
+
+To fully uninstall later:
+bash
+
+sudo systemctl stop jenkins
+sudo apt remove --purge jenkins -y
+sudo rm -rf /var/lib/jenkins /etc/jenkins /var/log/jenkins
+
+Go through Steps 1–4 and let me know what you get.
+
+CPU: 4min 3.083s
+vansh.padia@IBS-LAP-061:~/Videos/DevSecops/DevSecOps/python$ sudo systemctl stop jenkins
+sudo apt remove --purge jenkins -y
+sudo rm -rf /var/lib/jenkins /etc/jenkins /var/log/jenkins
+Reading package lists... Done
+Building dependency tree... Done
+Reading state information... Done
+The following packages will be REMOVED:
+  jenkins*
+0 upgraded, 0 newly installed, 1 to remove and 103 not upgraded.
+After this operation, 87.6 MB disk space will be freed.
+(Reading database ... 338028 files and directories currently installed.)
+Removing jenkins (2.516.3) ...
+(Reading database ... 338018 files and directories currently installed.)
+Purging configuration files for jenkins (2.516.3) ...
+failed to remove jenkins system user
+vansh.padia@IBS-LAP-061:~/Videos/DevSecops/DevSecOps/python$
+6:41 pm
+
+Jenkins is uninstalled. The "failed to remove jenkins system user" warning is harmless — it just means the jenkins user still exists on the system. Clean it up manually:
+bash
+
+sudo userdel -r jenkins 2>/dev/null; echo "done"
+
+Verify Jenkins is fully gone:
+bash
+
+which jenkins
+dpkg -l | grep jenkins
+
+Both should return nothing. You're clean. Ready to move to the next step?
+
+i have fresh install jenkins http://localhost:8080/loginError
+why it onpen on login page
+6:51 pm
+
+That's normal. Jenkins opens on the login page after setup. You need to unlock it first.
+
+Get the initial admin password:
+bash
+
+sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+
+Copy that password, paste it into the browser at http://localhost:8080, and it will take you through the setup wizard.
+
+If that file doesn't exist yet, Jenkins might still be starting:
+bash
+
+sudo systemctl status jenkins
+
+Share the output if you see any errors.
+
+docker run -d   --name jenkins   --network jenkins   -p 8080:8080   -p 50000:50000   -v jenkins_home:/var/jenkins_home   -v /var/run/docker.sock:/var/run/docker.sock   jenkins/jenkins:lts
+Unable to find image 'jenkins/jenkins:lts' locally
+lts: Pulling from jenkins/jenkins
+307f8152a55e: Pull complete 
+cebc1e77ceba: Pull complete 
+6b35bb76b8c8: Pull complete 
+801814f62c99: Pull complete 
+c2314d42cca1: Pull complete 
+76a355a69c2e: Pull complete 
+5834ae4b8774: Pull complete 
+ae218d1cfa6e: Pull complete 
+9014a3401c36: Pull complete 
+4c140080734e: Pull complete 
+dd00b4ea1f64: Pull complete 
+3bdbd616c406: Pull complete 
+Digest: sha256:01c992ffef29dcf41c7164e8c16285c657c2368c4943dda8d68c93fdf54447d5
+Status: Downloaded newer image for jenkins/jenkins:lts
+03767969225a5288e7dddf331bea0c4512caf64d79309bdc1ddfa33dc8504f34
+vansh.padia@IBS-LAP-061:~/Videos/DevSecops/DevSecOps/simple-python-app$ sudo systemctl status jenkins
+[sudo] password for vansh.padia: 
+Unit jenkins.service could not be found.
+vansh.padia@IBS-LAP-061:~/Videos/DevSecops/DevSecOps/simple-python-app$ docker ps
+CONTAINER ID   IMAGE                 COMMAND                  CREATED              STATUS              PORTS                                                                                          NAMES
+03767969225a   jenkins/jenkins:lts   "/usr/bin/tini -- /u…"   About a minute ago   Up About a minute   0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp, 0.0.0.0:50000->50000/tcp, [::]:50000->50000/tcp   jenkins
+vansh.padia@IBS-LAP-061:~/Videos/DevSecops/DevSecOps/simple-python-app$
+6:52 pm
+
+Jenkins is running in Docker. Get the unlock password:
+bash
+
+docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
+
+Copy that password and open http://localhost:8080 — paste it there to unlock Jenkins.
+
+Then:
+
+    Click Install suggested plugins
+    Wait for plugins to install
+    Create your admin user
+    Done
+
+Let me know once you're inside the dashboard.
+
+Started by user admin
+[Pipeline] Start of Pipeline
+[Pipeline] node
+Running on Jenkins
+ in /var/jenkins_home/workspace/simple-python
+[Pipeline] {
+[Pipeline] withEnv
+[Pipeline] {
+[Pipeline] stage
+[Pipeline] { (Checkout)
+[Pipeline] echo
+Checking out code...
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Build Docker Image)
+Stage "Build Docker Image" skipped due to earlier failure(s)
+[Pipeline] getContext
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Run Container)
+Stage "Run Container" skipped due to earlier failure(s)
+[Pipeline] getContext
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Health Check)
+Stage "Health Check" skipped due to earlier failure(s)
+[Pipeline] getContext
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Declarative: Post Actions)
+[Pipeline] echo
+Pipeline failed.
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] }
+[Pipeline] // withEnv
+[Pipeline] }
+[Pipeline] // node
+[Pipeline] End of Pipeline
+ERROR: ‘checkout scm’ is only available when using “Multibranch Pipeline” or “Pipeline script from SCM”
+Finished: FAILURE
+7:08 pm
+
+The error is clear — checkout scm only works when Jenkins is pulling code from a Git repo. Since you pasted the pipeline directly, there's no SCM attached.
+
+Fix — replace the Checkout stage:
+
+In your Jenkins job, edit the pipeline script and replace the Checkout stage with this:
+groovy
+
+stage('Checkout') {
+    steps {
+        echo 'Skipping checkout - using inline pipeline'
+    }
+}
+
+But then Jenkins also has no code to build from. Two options:
+
+Option A — Simplest: hardcode the workspace path
+
+Put your app files on the Jenkins container first:
+bash
+
+docker cp app.py jenkins:/var/jenkins_home/workspace/simple-python/
+docker cp requirements.txt jenkins:/var/jenkins_home/workspace/simple-python/
+docker cp Dockerfile jenkins:/var/jenkins_home/workspace/simple-python/
+
+Then replace Checkout stage as shown above and run again.
+
+Option B — Proper way: use a Git repo
+
+Push your code to GitHub/GitLab, then in the Jenkins job:
+
+    Change Pipeline Definition from "Pipeline script" to "Pipeline script from SCM"
+    Set SCM to Git, paste your repo URL
+    Branch: main or master
+    Script Path: Jenkinsfile
+
+For now go with Option A to keep moving. Run the docker cp commands and retry the build. Let me know what happens.
+
+can i used git clone from git hub
+7:08 pm
+
+Yes, simplest approach. Replace the entire Checkout stage with this:
+groovy
+
+stage('Checkout') {
+    steps {
+        echo 'Cloning from GitHub...'
+        sh 'git clone https://github.com/your-username/your-repo.git .'
+    }
+}
+
+But a cleaner way is to just use the full pipeline like this:
+groovy
+
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME = "simple-python-app"
+        IMAGE_TAG  = "latest"
+        REPO_URL   = "https://github.com/your-username/your-repo.git"
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                echo 'Cloning from GitHub...'
+                sh 'git clone ${REPO_URL} .'
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                sh 'docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .'
+            }
+        }
+
+        stage('Run Container') {
+            steps {
+                sh '''
+                    docker stop ${IMAGE_NAME} || true
+                    docker rm ${IMAGE_NAME} || true
+                    docker run -d -p 5000:5000 --name ${IMAGE_NAME} ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                sh 'sleep 3 && curl -f http://localhost:5000/health'
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Pipeline completed successfully!'
+        }
+        failure {
+            echo 'Pipeline failed.'
+        }
+    }
+}
+
+Steps:
+
+    Push your app.py, requirements.txt, Dockerfile to a GitHub repo
+    Replace your-username/your-repo with your actual repo URL
+    Paste this pipeline into Jenkins job → Save → Build Now
+
+Do you have the code pushed to GitHub already?
+
+Started by user admin
+[Pipeline] Start of Pipeline
+[Pipeline] node
+Running on Jenkins
+ in /var/jenkins_home/workspace/simple-python
+[Pipeline] {
+[Pipeline] withEnv
+[Pipeline] {
+[Pipeline] stage
+[Pipeline] { (Checkout)
+[Pipeline] echo
+Checking out code...
+[Pipeline] sh
++ git clone https://github.com/vanshPadia/DevSecOps.git .
+Cloning into '.'...
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Build Docker Image)
+[Pipeline] echo
+Building Docker image...
+[Pipeline] sh
++ docker build -t simple-python-app:latest .
+ERROR: permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock: Head "http://%2Fvar%2Frun%2Fdocker.sock/_ping": dial unix /var/run/docker.sock: connect: permission denied
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Run Container)
+Stage "Run Container" skipped due to earlier failure(s)
+[Pipeline] getContext
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Health Check)
+Stage "Health Check" skipped due to earlier failure(s)
+[Pipeline] getContext
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Declarative: Post Actions)
+[Pipeline] echo
+Pipeline failed.
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] }
+[Pipeline] // withEnv
+[Pipeline] }
+[Pipeline] // node
+[Pipeline] End of Pipeline
+ERROR: script returned exit code 1
+Finished: FAILURE
+7:11 pm
+
+Docker socket permission issue. Jenkins user inside the container doesn't have access to Docker socket.
+
+Fix it:
+bash
+
+# Give jenkins user access to docker socket
+docker exec -u root jenkins chmod 666 /var/run/docker.sock
+
+Then run the pipeline again. That's it.
+
+If it fails again after a container restart, make it permanent by running:
+bash
+
+docker exec -u root jenkins bash -c "groupadd docker; usermod -aG docker jenkins"
+docker restart jenkins
+
+Try the quick fix first and let me know.
+
+pipeline {
+    agent any
+    environment {
+        IMAGE_NAME = "simple-python-app"
+        IMAGE_TAG  = "latest"
+    }
+    stages {
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+        stage('Checkout') {
+            steps {
+                echo 'Checking out code...'
+                sh '''
+                    git clone https://github.com/vanshPadia/DevSecOps.git .
+                '''
+            }
+        }
+        stage('Build Docker Image') {
+            steps {
+                echo 'Building Docker image...'
+                sh '''
+                    cd simple-python-app
+                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                '''
+            }
+        }
+        stage('Run Container') {
+            steps {
+                echo 'Running container...'
+                sh '''
+                    docker stop ${IMAGE_NAME} || true
+                    docker rm ${IMAGE_NAME} || true
+                    docker run -d \
+                      -p 5000:5000 \
+                      --name ${IMAGE_NAME} \
+                      ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+    }
+    post {
+        success {
+            echo 'Pipeline completed successfully!'
+        }
+        failure {
+            echo 'Pipeline failed.'
+        }
+    }
+}
+this pipeline is working now what , ?
+7:26 pm
+
+Great progress! Pipeline is working. Now let's verify the app is actually running.
+
+Check from your host machine:
+bash
+
+curl http://localhost:5000
+curl http://localhost:5000/health
+
+You should see:
+
+Hello from Python App - v1.0
+{"status": "ok"}
+
+If curl doesn't work, the container is inside Docker network. Check:
+bash
+
+docker ps | grep simple-python-app
+docker logs simple-python-app
+
+Once confirmed working, tell me and we move to Phase 2 — adding SAST tools one by one:
+Order	Tool	What it does
+1	Unit Tests (pytest)	Tests your code logic
+2	Trivy	Scans Docker image for vulnerabilities
+3	SonarQube	Code quality + security analysis
+4	OWASP Dependency Check	CVEs in your pip packages
+
+Each one will be a new stage added to this same Jenkinsfile. What's the curl output?
+
+i have removed the curl from the pipline , add this sast tools
+7:27 pm
+
+Let's add them one by one properly.
+Phase 2 — Adding SAST Tools
+
+We'll add in this order:
+
+    Unit Tests — pytest
+    Trivy — image scan
+    SonarQube — code quality
+    OWASP Dependency Check — CVE in packages
+
+Step 1 — Add Unit Tests (pytest)
+
+First add a test file to your repo. In your simple-python-app/ folder:
+bash
+
+cat > test_app.py << 'EOF'
+import pytest
+from app import app
+
+@pytest.fixture
+def client():
+    app.config['TESTING'] = True
+    with app.test_client() as client:
+        yield client
+
+def test_home(client):
+    response = client.get('/')
+    assert response.status_code == 200
+    assert b'Hello from Python App' in response.data
+
+def test_health(client):
+    response = client.get('/health')
+    assert response.status_code == 200
+EOF
+
+Add pytest to requirements.txt:
+bash
+
+cat > requirements.txt << 'EOF'
+flask==3.0.3
+pytest==8.3.3
+EOF
+
+Push to GitHub:
+bash
+
+git add .
+git commit -m "add unit tests"
+git push
+
+Step 2 — Install Trivy in Jenkins container
+bash
+
+docker exec -u root jenkins bash -c "
+  apt-get update &&
+  apt-get install -y wget apt-transport-https gnupg &&
+  wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | apt-key add - &&
+  echo 'deb https://aquasecurity.github.io/trivy-repo/deb generic main' > /etc/apt/sources.list.d/trivy.list &&
+  apt-get update &&
+  apt-get install -y trivy
+"
+
+Verify:
+bash
+
+docker exec jenkins trivy --version
+
+Step 3 — Run SonarQube as a container
+bash
+
+docker run -d \
+  --name sonarqube \
+  --network jenkins \
+  -p 9000:9000 \
+  -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true \
+  sonarqube:lts-community
+
+Wait 2-3 minutes then open http://localhost:9000
+
+    Default login: admin / admin
+    It will ask you to change the password
+    Then create a new project → name it simple-python-app
+    Generate a token and save it
+
+Step 4 — Add SonarQube token to Jenkins
+
+In Jenkins UI:
+
+    Go to Manage Jenkins → Credentials → Global → Add Credentials
+    Kind: Secret text
+    Secret: paste your SonarQube token
+    ID: sonar-token
+    Save
+
+Step 5 — Updated Jenkinsfile with all SAST stages
+groovy
+
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME  = "simple-python-app"
+        IMAGE_TAG   = "latest"
+        SONAR_URL   = "http://sonarqube:9000"
+    }
+
+    stages {
+
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+
+        stage('Checkout') {
+            steps {
+                echo 'Checking out code...'
+                sh 'git clone https://github.com/vanshPadia/DevSecOps.git .'
+            }
+        }
+
+        stage('Unit Tests') {
+            steps {
+                echo 'Running unit tests...'
+                sh '''
+                    cd simple-python-app
+                    pip install -r requirements.txt --break-system-packages
+                    pytest test_app.py -v --tb=short
+                '''
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                echo 'Building Docker image...'
+                sh '''
+                    cd simple-python-app
+                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                '''
+            }
+        }
+
+        stage('Trivy Image Scan') {
+            steps {
+                echo 'Scanning image with Trivy...'
+                sh '''
+                    trivy image --exit-code 0 \
+                      --severity HIGH,CRITICAL \
+                      --format table \
+                      ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                echo 'Running SonarQube analysis...'
+                withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                    sh '''
+                        cd simple-python-app
+                        docker run --rm \
+                          --network jenkins \
+                          -e SONAR_HOST_URL=${SONAR_URL} \
+                          -e SONAR_TOKEN=${SONAR_TOKEN} \
+                          -v $(pwd):/usr/src \
+                          sonarsource/sonar-scanner-cli \
+                          -Dsonar.projectKey=simple-python-app \
+                          -Dsonar.sources=.
+                    '''
+                }
+            }
+        }
+
+        stage('OWASP Dependency Check') {
+            steps {
+                echo 'Running OWASP Dependency Check...'
+                sh '''
+                    docker run --rm \
+                      -v $(pwd)/simple-python-app:/src \
+                      -v $(pwd)/owasp-report:/report \
+                      owasp/dependency-check \
+                      --scan /src \
+                      --format HTML \
+                      --out /report \
+                      --project simple-python-app
+                '''
+            }
+        }
+
+        stage('Run Container') {
+            steps {
+                echo 'Running container...'
+                sh '''
+                    docker stop ${IMAGE_NAME} || true
+                    docker rm ${IMAGE_NAME} || true
+                    docker run -d \
+                      -p 5000:5000 \
+                      --name ${IMAGE_NAME} \
+                      ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Pipeline completed successfully!'
+        }
+        failure {
+            echo 'Pipeline failed.'
+        }
+    }
+}
+
+Do these in order:
+
+    Add test_app.py and update requirements.txt → push to GitHub
+    Install Trivy in Jenkins container
+    Start SonarQube container, create project, get token
+    Add token to Jenkins credentials
+    Update Jenkinsfile → push → run pipeline
+
+Start with step 1 and let me know where you get stuck.
+
+we can do  unit test ,owasp  and after that we can do sonnar and after that we can do trivy and we can deploy , what you think , i dont know the flow what u think help to understand also .
+7:30 pm
+
+Good question. Let me explain the proper industry-standard flow and why.
+The Right Order & Why
+
+Code → Unit Test → OWASP → SonarQube → Build Image → Trivy → Deploy
+
+Logic behind this order:
+#	Stage	Why here
+1	Unit Test	Test your code logic first. If code is broken, no point going further. Fails fast, saves time.
+2	OWASP Dependency Check	Check your requirements.txt for known CVEs in packages. Still at code level, no Docker needed yet.
+3	SonarQube	Deep code quality + security analysis. Catches bad code patterns, hardcoded secrets, SQL injection risks etc. Still at code level.
+4	Build Docker Image	Only build the image after code is clean and verified. No point building a bad image.
+5	Trivy	Scans the built Docker image for OS + package vulnerabilities. Needs image to exist first.
+6	Deploy	Only deploy if everything above passed. Clean code, clean image.
+Simple way to remember:
+
+Code level checks first → then Image level checks → then Deploy
+
+    Unit Test, OWASP, SonarQube = code level (no Docker needed)
+    Trivy = image level (Docker image must exist)
+    Deploy = last, always
+
+Your Updated Flow
+groovy
+
+1. Clean Workspace
+2. Checkout
+3. Unit Test          ← code level
+4. OWASP              ← code level
+5. SonarQube          ← code level
+6. Build Docker Image ← now build
+7. Trivy              ← image level
+8. Deploy             ← clean, ship it
+
+This is exactly what we'll build. Shall we start with Unit Test stage first?
+
+create a update pipline that flow
+7:31 pm
+
+Here's the updated Jenkinsfile with the correct flow:
+groovy
+
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME = "simple-python-app"
+        IMAGE_TAG  = "latest"
+        SONAR_URL  = "http://sonarqube:9000"
+    }
+
+    stages {
+
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+
+        stage('Checkout') {
+            steps {
+                echo 'Checking out code...'
+                sh 'git clone https://github.com/vanshPadia/DevSecOps.git .'
+            }
+        }
+
+        stage('Unit Test') {
+            steps {
+                echo 'Running unit tests...'
+                sh '''
+                    cd simple-python-app
+                    pip install -r requirements.txt --break-system-packages
+                    pytest test_app.py -v --tb=short
+                '''
+            }
+        }
+
+        stage('OWASP Dependency Check') {
+            steps {
+                echo 'Running OWASP Dependency Check...'
+                sh '''
+                    mkdir -p ${WORKSPACE}/owasp-report
+                    docker run --rm \
+                      -v ${WORKSPACE}/simple-python-app:/src \
+                      -v ${WORKSPACE}/owasp-report:/report \
+                      owasp/dependency-check \
+                      --scan /src \
+                      --format HTML \
+                      --out /report \
+                      --project simple-python-app
+                '''
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                echo 'Running SonarQube analysis...'
+                withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                    sh '''
+                        docker run --rm \
+                          --network jenkins \
+                          -e SONAR_HOST_URL=${SONAR_URL} \
+                          -e SONAR_TOKEN=${SONAR_TOKEN} \
+                          -v ${WORKSPACE}/simple-python-app:/usr/src \
+                          sonarsource/sonar-scanner-cli \
+                          -Dsonar.projectKey=simple-python-app \
+                          -Dsonar.sources=.
+                    '''
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                echo 'Building Docker image...'
+                sh '''
+                    cd simple-python-app
+                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                '''
+            }
+        }
+
+        stage('Trivy Image Scan') {
+            steps {
+                echo 'Scanning image with Trivy...'
+                sh '''
+                    trivy image \
+                      --exit-code 0 \
+                      --severity HIGH,CRITICAL \
+                      --format table \
+                      ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                echo 'Deploying container...'
+                sh '''
+                    docker stop ${IMAGE_NAME} || true
+                    docker rm ${IMAGE_NAME} || true
+                    docker run -d \
+                      -p 5000:5000 \
+                      --name ${IMAGE_NAME} \
+                      ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Pipeline completed successfully - app is running on port 5000'
+        }
+        failure {
+            echo 'Pipeline failed - check logs above'
+        }
+    }
+}
+
+Now do these steps before running the pipeline:
+
+1. Add test file to your repo:
+bash
+
+cd simple-python-app
+
+cat > test_app.py << 'EOF'
+import pytest
+from app import app
+
+@pytest.fixture
+def client():
+    app.config['TESTING'] = True
+    with app.test_client() as client:
+        yield client
+
+def test_home(client):
+    response = client.get('/')
+    assert response.status_code == 200
+    assert b'Hello from Python App' in response.data
+
+def test_health(client):
+    response = client.get('/health')
+    assert response.status_code == 200
+EOF
+
+2. Update requirements.txt:
+bash
+
+cat > requirements.txt << 'EOF'
+flask==3.0.3
+pytest==8.3.3
+EOF
+
+3. Install Trivy in Jenkins container:
+bash
+
+docker exec -u root jenkins bash -c "
+  apt-get update &&
+  apt-get install -y wget apt-transport-https gnupg &&
+  wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | apt-key add - &&
+  echo 'deb https://aquasecurity.github.io/trivy-repo/deb generic main' > /etc/apt/sources.list.d/trivy.list &&
+  apt-get update &&
+  apt-get install -y trivy
+"
+
+4. Start SonarQube:
+bash
+
+docker run -d \
+  --name sonarqube \
+  --network jenkins \
+  -p 9000:9000 \
+  -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true \
+  sonarqube:lts-community
+
+5. Push everything to GitHub:
+bash
+
+git add .
+git commit -m "add unit tests and updated pipeline"
+git push
+
+Do steps 1-5 in order and let me know once done. We'll run the pipeline stage by stage.
+
+pipeline is ruuning now , can u tell me what can we do for 2 node
+8:27 pm
+
+For Project 2 (Node.js), the stack adds DAST on top of SAST. Let me explain the full picture first.
+Project 2 — Node + Docker + Jenkins + SAST + DAST
+What's new compared to Project 1:
+Tool	Type	What it does
+Jest	Unit Test	Node.js unit testing
+OWASP Dependency Check	SAST	CVEs in npm packages
+SonarQube	SAST	Code quality + security
+Trivy	SAST	Docker image scan
+OWASP ZAP	DAST	Attacks running app, finds runtime vulnerabilities
+SAST vs DAST — Key Difference
+
+SAST = Static Analysis → scans SOURCE CODE (app not running)
+DAST = Dynamic Analysis → attacks RUNNING APP (app must be live)
+
+DAST is why deploy comes before the final security gate in Project 2.
+Project 2 Pipeline Flow
+
+Clean Workspace
+      ↓
+   Checkout
+      ↓
+  Unit Test (Jest)
+      ↓
+OWASP Dependency Check (npm packages)
+      ↓
+ SonarQube Analysis
+      ↓
+Build Docker Image
+      ↓
+  Trivy Image Scan
+      ↓
+    Deploy
+      ↓
+  OWASP ZAP (DAST) ← attacks the running app
+      ↓
+  ZAP Report
+
+Simple Node App we'll build
+
+simple-node-app/
+├── app.js
+├── package.json
+├── Dockerfile
+├── Jenkinsfile
+└── tests/
+    └── app.test.js
+
+A simple Express app with / and /health routes — same as Python but in Node.
+Before we start — do you want to:
+
+    Finish and verify Project 1 pipeline fully first
+    Or start Project 2 now in parallel
+
+What do you prefer?
+
+i want to create project 2 in parral
+8:27 pm
+
+Let's build it. Start with the app first.
+Step 1 — Create the Node App
+bash
+
+mkdir -p ~/Videos/DevSecops/DevSecOps/simple-node-app && cd ~/Videos/DevSecops/DevSecOps/simple-node-app
+
+app.js
+bash
+
+cat > app.js << 'EOF'
+const express = require('express');
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+    res.send('Hello from Node App - v1.0');
+});
+
+app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'ok' });
+});
+
+if (require.main === module) {
+    app.listen(PORT, '0.0.0.0', () => {
+        console.log(`Server running on port ${PORT}`);
+    });
+}
+
+module.exports = app;
+EOF
+
+package.json
+bash
+
+cat > package.json << 'EOF'
+{
+  "name": "simple-node-app",
+  "version": "1.0.0",
+  "description": "Simple Node.js app for DevSecOps",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "test": "jest --coverage"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^6.3.4"
+  }
+}
+EOF
+
+Step 2 — Add Unit Tests
+bash
+
+mkdir -p tests
+
+cat > tests/app.test.js << 'EOF'
+const request = require('supertest');
+const app = require('../app');
+
+describe('GET /', () => {
+    it('should return 200 and hello message', async () => {
+        const res = await request(app).get('/');
+        expect(res.statusCode).toBe(200);
+        expect(res.text).toContain('Hello from Node App');
+    });
+});
+
+describe('GET /health', () => {
+    it('should return 200 and status ok', async () => {
+        const res = await request(app).get('/health');
+        expect(res.statusCode).toBe(200);
+        expect(res.body.status).toBe('ok');
+    });
+});
+EOF
+
+Step 3 — Dockerfile
+bash
+
+cat > Dockerfile << 'EOF'
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install --production
+
+COPY app.js .
+
+EXPOSE 3000
+
+CMD ["node", "app.js"]
+EOF
+
+Step 4 — Test Locally First
+bash
+
+# Install dependencies
+npm install
+
+# Run tests
+npm test
+
+# Build and run with Docker
+docker build -t simple-node-app:latest .
+docker run -d -p 3000:3000 --name simple-node-app simple-node-app:latest
+
+# Test
+curl http://localhost:3000
+curl http://localhost:3000/health
+
+# Clean up
+docker stop simple-node-app && docker rm simple-node-app
+
+Step 5 — Jenkinsfile
+bash
+
+cat > Jenkinsfile << 'EOF'
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME = "simple-node-app"
+        IMAGE_TAG  = "latest"
+        SONAR_URL  = "http://sonarqube:9000"
+        APP_PORT   = "3000"
+    }
+
+    stages {
+
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+
+        stage('Checkout') {
+            steps {
+                echo 'Checking out code...'
+                sh 'git clone https://github.com/vanshPadia/DevSecOps.git .'
+            }
+        }
+
+        stage('Unit Test') {
+            steps {
+                echo 'Running Jest unit tests...'
+                sh '''
+                    cd simple-node-app
+                    npm install
+                    npm test
+                '''
+            }
+        }
+
+        stage('OWASP Dependency Check') {
+            steps {
+                echo 'Running OWASP Dependency Check...'
+                sh '''
+                    mkdir -p ${WORKSPACE}/owasp-report-node
+                    docker run --rm \
+                      -v ${WORKSPACE}/simple-node-app:/src \
+                      -v ${WORKSPACE}/owasp-report-node:/report \
+                      owasp/dependency-check \
+                      --scan /src \
+                      --format HTML \
+                      --out /report \
+                      --project simple-node-app
+                '''
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                echo 'Running SonarQube analysis...'
+                withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                    sh '''
+                        docker run --rm \
+                          --network jenkins \
+                          -e SONAR_HOST_URL=${SONAR_URL} \
+                          -e SONAR_TOKEN=${SONAR_TOKEN} \
+                          -v ${WORKSPACE}/simple-node-app:/usr/src \
+                          sonarsource/sonar-scanner-cli \
+                          -Dsonar.projectKey=simple-node-app \
+                          -Dsonar.sources=. \
+                          -Dsonar.exclusions=node_modules/**,tests/**
+                    '''
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                echo 'Building Docker image...'
+                sh '''
+                    cd simple-node-app
+                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                '''
+            }
+        }
+
+        stage('Trivy Image Scan') {
+            steps {
+                echo 'Scanning image with Trivy...'
+                sh '''
+                    trivy image \
+                      --exit-code 0 \
+                      --severity HIGH,CRITICAL \
+                      --format table \
+                      ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                echo 'Deploying container...'
+                sh '''
+                    docker stop ${IMAGE_NAME} || true
+                    docker rm ${IMAGE_NAME} || true
+                    docker run -d \
+                      --network jenkins \
+                      -p ${APP_PORT}:${APP_PORT} \
+                      --name ${IMAGE_NAME} \
+                      ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+
+        stage('OWASP ZAP - DAST') {
+            steps {
+                echo 'Running OWASP ZAP DAST scan...'
+                sh '''
+                    mkdir -p ${WORKSPACE}/zap-report
+                    docker run --rm \
+                      --network jenkins \
+                      -v ${WORKSPACE}/zap-report:/zap/wrk \
+                      ghcr.io/zaproxy/zaproxy:stable \
+                      zap-baseline.py \
+                      -t http://${IMAGE_NAME}:${APP_PORT} \
+                      -r zap-report.html \
+                      -I
+                '''
+            }
+        }
+
+    }
+
+    post {
+        success {
+            echo 'Pipeline completed - app running on port 3000'
+        }
+        failure {
+            echo 'Pipeline failed - check logs above'
+        }
+    }
+}
+EOF
+
+Step 6 — Push to GitHub
+bash
+
+cd ~/Videos/DevSecops/DevSecOps
+git add simple-node-app/
+git commit -m "add simple-node-app with SAST and DAST pipeline"
+git push
+
+Step 7 — Create Jenkins Job
+
+In Jenkins UI:
+
+    New Item → Pipeline → name it simple-node-app
+    Pipeline script → paste the Jenkinsfile
+    Save
+
+Do Steps 1–4 first (local testing), confirm the app and tests work, then push and run the Jenkins pipeline. Let me know what output you get.
+
+Started by user admin
+[Pipeline] Start of Pipeline
+[Pipeline] node
+Running on Jenkins
+ in /var/jenkins_home/workspace/simple-node
+[Pipeline] {
+[Pipeline] withEnv
+[Pipeline] {
+[Pipeline] stage
+[Pipeline] { (Clean Workspace)
+[Pipeline] cleanWs
+[WS-CLEANUP] Deleting project workspace...
+[WS-CLEANUP] Deferred wipeout is used...
+[WS-CLEANUP] done
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Checkout)
+[Pipeline] echo
+Checking out code...
+[Pipeline] sh
++ git clone https://github.com/vanshPadia/DevSecOps.git .
+Cloning into '.'...
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Unit Test)
+[Pipeline] echo
+Running Jest unit tests...
+[Pipeline] sh
++ cd simple-node-app
++ npm install
+/var/jenkins_home/workspace/simple-node@tmp/durable-386b1773/script.sh.copy: 3: npm: not found
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (OWASP Dependency Check)
+Stage "OWASP Dependency Check" skipped due to earlier failure(s)
+[Pipeline] getContext
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (SonarQube Analysis)
+Stage "SonarQube Analysis" skipped due to earlier failure(s)
+[Pipeline] getContext
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Build Docker Image)
+Stage "Build Docker Image" skipped due to earlier failure(s)
+[Pipeline] getContext
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Trivy Image Scan)
+Stage "Trivy Image Scan" skipped due to earlier failure(s)
+[Pipeline] getContext
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Deploy)
+Stage "Deploy" skipped due to earlier failure(s)
+[Pipeline] getContext
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (OWASP ZAP - DAST)
+Stage "OWASP ZAP - DAST" skipped due to earlier failure(s)
+[Pipeline] getContext
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Declarative: Post Actions)
+[Pipeline] echo
+Pipeline failed - check logs above
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] }
+[Pipeline] // withEnv
+[Pipeline] }
+[Pipeline] // node
+[Pipeline] End of Pipeline
+ERROR: script returned exit code 127
+Finished: FAILURE
+8:33 pm
+
+npm: not found — Node.js is not installed inside the Jenkins container. Fix it:
+bash
+
+docker exec -u root jenkins bash -c "
+  apt-get update &&
+  apt-get install -y curl &&
+  curl -fsSL https://deb.nodesource.com/setup_20.x | bash - &&
+  apt-get install -y nodejs
+"
+
+Verify:
+bash
+
+docker exec jenkins node --version
+docker exec jenkins npm --version
+
+You should see something like:
+
+v20.x.x
+10.x.x
+
+Then re-run the pipeline. Let me know what happens.
+
+pipeline is running now , what we do for 3
+8:38 pm
+
+Great! Before we jump to Project 3, let me explain what makes it different.
+Project 3 — What's Different (Offline Setup)
+
+Java + Docker + Jenkins + SAST + DAST + NO INTERNET
+
+The entire pipeline runs on a server with no internet access. This means:
+Challenge	Solution
+Can't pull Docker images	Pre-pull and save images as .tar files
+Can't download Trivy DB	Download vulnerability DB offline and mount it
+Can't reach SonarQube online	Run SonarQube locally (already doing this)
+Can't download OWASP CVE DB	Pre-download the NVD data cache
+Maven can't download dependencies	Set up a local Nexus repository mirror
+ZAP can't update rules	Use ZAP with bundled rules only
+Project 3 Full Flow
+
+Clean Workspace
+      ↓
+   Checkout (local Git server or mounted code)
+      ↓
+  Unit Test (JUnit - offline Maven)
+      ↓
+OWASP Dependency Check (offline NVD cache)
+      ↓
+ SonarQube Analysis (local SonarQube)
+      ↓
+Build Docker Image (no pull, base image pre-loaded)
+      ↓
+  Trivy Scan (offline DB)
+      ↓
+    Deploy
+      ↓
+  OWASP ZAP DAST (offline)
+
+Before we start — a few questions:
+
+Do you have a separate offline server/VM for this, or are you simulating offline on the same machine by blocking internet?
+
+no
+8:39 pm
+
+So you'll simulate the offline environment on your same local machine by blocking internet access. That's fine for learning purposes.
+
+Here's the plan:
+Offline Simulation Strategy
+
+We'll do it in 2 phases:
+
+Phase 1 — Prepare everything while online:
+
+- Pull all required Docker images
+- Save them as .tar files
+- Download Trivy vulnerability DB
+- Download OWASP NVD cache
+- Set up local Nexus (Maven mirror)
+- Build the Java app once to cache Maven dependencies
+
+Phase 2 — Block internet + run pipeline:
+
+- Block outbound internet on Docker network
+- Load images from .tar files
+- Run full pipeline using only local resources
+
+Before we start building — which Java framework do you want?
+
+Option A — Spring Boot (most common in industry, Maven)
+Option B — Plain Java + Maven (simpler, lightweight)
+
+And one more thing — for Project 3 do you want to:
+
+Option 1 — Simulate offline on same machine (block Docker internet)
+Option 2 — Use a separate VM (VirtualBox/VMware) with no internet
+
+Which do you prefer for both?
+
+let skips this for now , what is 4
+8:39 pm
+
+You said earlier:
+
+    "there is one scenario I will tell you later"
+
+So Project 4 is yours to define. What's the scenario you had in mind? Tell me and I'll help you plan the full pipeline for it.
+
+first check this
+8:40 pm
+
+The OWASP scan itself completed successfully — it downloaded all 352,565 NVD records and finished analysis. The failure is at the report writing step:
+
+[ERROR] Error generating the report for simple-python-app
+[INFO] Writing HTML report to: /report/dependency-check-report.html
+ERROR: script returned exit code 12
+
+Root cause — permissions issue on the report folder. The /report directory mounted from the host doesn't have write permissions for the OWASP container user.
+
+Fix:
+bash
+
+# Give write permissions to the owasp-report folder
+docker exec -u root jenkins bash -c "chmod -R 777 /var/jenkins_home/workspace/simple-python/owasp-report" 2>/dev/null; echo "done"
+
+Also update the pipeline to create the folder with correct permissions before running OWASP:
+groovy
+
+stage('OWASP Dependency Check') {
+    steps {
+        echo 'Running OWASP Dependency Check...'
+        sh '''
+            mkdir -p ${WORKSPACE}/owasp-report
+            chmod 777 ${WORKSPACE}/owasp-report
+            docker run --rm \
+              -v ${WORKSPACE}/simple-python-app:/src \
+              -v ${WORKSPACE}/owasp-report:/report \
+              owasp/dependency-check \
+              --scan /src \
+              --format HTML \
+              --out /report \
+              --project simple-python-app
+        '''
+    }
+}
+
+Also one important note — OWASP downloaded the full NVD database this run which took ~20 minutes. To avoid that on every run, persist the cache by adding a volume:
+groovy
+
+docker run --rm \
+  -v ${WORKSPACE}/simple-python-app:/src \
+  -v ${WORKSPACE}/owasp-report:/report \
+  -v ${WORKSPACE}/owasp-data:/usr/share/dependency-check/data \
+  owasp/dependency-check \
+  --scan /src \
+  --format HTML \
+  --out /report \
+  --project simple-python-app
+
+The owasp-data volume caches the NVD DB so next run skips the 20-minute download.
+
+Update your Jenkinsfile with both fixes and re-run. Let me know the output.
+
+pipeline {
+    agent any
+    environment {
+        IMAGE_NAME = "simple-python-app"
+        IMAGE_TAG  = "latest"
+        SONAR_URL  = "http://sonarqube:9000"
+    }
+    stages {
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+        stage('Checkout') {
+            steps {
+                echo 'Checking out code...'
+                sh '''
+                    git clone https://github.com/vanshPadia/DevSecOps.git .
+                '''
+            }
+        }
+        // stage('Unit Test') {
+        //     steps {
+        //         echo 'Running unit tests...'
+
+        //         sh '''
+        //             cd simple-python-app
+
+        //             docker run --rm \
+        //               -v $(pwd):/app \
+        //               -w /app \
+        //               python:3.11-slim \
+        //               bash -c "ls -la && pip install -r requirements.txt pytest && pytest -v --tb=short"
+        //         '''
+        //     }
+        // }
+        stage('OWASP Dependency Check') {
+            steps {
+                echo 'Running OWASP Dependency Check...'
+                sh '''
+                    mkdir -p ${WORKSPACE}/owasp-report
+                    docker run --rm \
+                      -v ${WORKSPACE}/simple-python-app:/src \
+                      -v ${WORKSPACE}/owasp-report:/report \
+                      owasp/dependency-check \
+                      --scan /src \
+                      --format HTML \
+                      --out /report \
+                      --project simple-python-app
+                '''
+            }
+        }
+        stage('SonarQube Analysis') {
+            steps {
+                echo 'Running SonarQube analysis...'
+                withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                    sh '''
+                        docker run --rm \
+                          --network jenkins1 \
+                          -e SONAR_HOST_URL=${SONAR_URL} \
+                          -e SONAR_TOKEN=${SONAR_TOKEN} \
+                          -v ${WORKSPACE}/simple-python-app:/usr/src \
+                          sonarsource/sonar-scanner-cli \
+                          -Dsonar.projectKey=simple-python-app \
+                          -Dsonar.sources=.
+                    '''
+                }
+            }
+        }
+        stage('Build Docker Image') {
+            steps {
+                echo 'Building Docker image...'
+                sh '''
+                    cd simple-python-app
+                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                '''
+            }
+        }
+        stage('Trivy Image Scan') {
+            steps {
+                echo 'Scanning image with Trivy...'
+                sh '''
+                    trivy image \
+                      --exit-code 0 \
+                      --severity HIGH,CRITICAL \
+                      --format table \
+                      ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+        stage('Deploy') {
+            steps {
+                echo 'Deploying container...'
+                sh '''
+                    docker stop ${IMAGE_NAME} || true
+                    docker rm ${IMAGE_NAME} || true
+                    docker run -d \
+                      --network jenkins1 \
+                      -p 5000:5000 \
+                      --name ${IMAGE_NAME} \
+                      ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+        stage('Health Check') {
+            steps {
+                echo 'Running health check...'
+                sh '''
+                    sleep 5
+                    curl -f http://simple-python-app:5000/health
+                '''
+            }
+        }
+    }
+    post {
+        success {
+            echo 'Pipeline completed successfully - app is running on port 5000'
+        }
+        failure {
+            echo 'Pipeline failed - check logs above'
+        }
+    }
+}
+fix this pipleine and also i want to do unit test in simple way , how to install pip in docker
+8:42 pm
+
+Let me fix the full pipeline with proper unit tests and permissions.
+Issues I see in your current pipeline:
+
+    chmod 777 missing on owasp-report folder
+    Unit test overcomplicated — run it directly, not inside Docker
+    pip not installed in Jenkins container
+    curl using container name — should use localhost for health check
+
+Step 1 — Install pip in Jenkins container
+bash
+
+docker exec -u root jenkins bash -c "
+  apt-get update &&
+  apt-get install -y python3-pip python3 &&
+  pip3 install flask pytest --break-system-packages
+"
+
+Verify:
+bash
+
+docker exec jenkins pip3 --version
+docker exec jenkins python3 --version
+
+Step 2 — Fixed Jenkinsfile
+groovy
+
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME = "simple-python-app"
+        IMAGE_TAG  = "latest"
+        SONAR_URL  = "http://sonarqube:9000"
+    }
+
+    stages {
+
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+
+        stage('Checkout') {
+            steps {
+                echo 'Checking out code...'
+                sh 'git clone https://github.com/vanshPadia/DevSecOps.git .'
+            }
+        }
+
+        stage('Unit Test') {
+            steps {
+                echo 'Running unit tests...'
+                sh '''
+                    cd simple-python-app
+                    pip3 install -r requirements.txt --break-system-packages
+                    python3 -m pytest test_app.py -v --tb=short
+                '''
+            }
+        }
+
+        stage('OWASP Dependency Check') {
+            steps {
+                echo 'Running OWASP Dependency Check...'
+                sh '''
+                    mkdir -p ${WORKSPACE}/owasp-report
+                    chmod 777 ${WORKSPACE}/owasp-report
+                    mkdir -p ${WORKSPACE}/owasp-data
+                    chmod 777 ${WORKSPACE}/owasp-data
+                    docker run --rm \
+                      -v ${WORKSPACE}/simple-python-app:/src \
+                      -v ${WORKSPACE}/owasp-report:/report \
+                      -v ${WORKSPACE}/owasp-data:/usr/share/dependency-check/data \
+                      owasp/dependency-check \
+                      --scan /src \
+                      --format HTML \
+                      --out /report \
+                      --project simple-python-app
+                '''
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                echo 'Running SonarQube analysis...'
+                withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                    sh '''
+                        docker run --rm \
+                          --network jenkins1 \
+                          -e SONAR_HOST_URL=${SONAR_URL} \
+                          -e SONAR_TOKEN=${SONAR_TOKEN} \
+                          -v ${WORKSPACE}/simple-python-app:/usr/src \
+                          sonarsource/sonar-scanner-cli \
+                          -Dsonar.projectKey=simple-python-app \
+                          -Dsonar.sources=.
+                    '''
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                echo 'Building Docker image...'
+                sh '''
+                    cd simple-python-app
+                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                '''
+            }
+        }
+
+        stage('Trivy Image Scan') {
+            steps {
+                echo 'Scanning image with Trivy...'
+                sh '''
+                    trivy image \
+                      --exit-code 0 \
+                      --severity HIGH,CRITICAL \
+                      --format table \
+                      ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                echo 'Deploying container...'
+                sh '''
+                    docker stop ${IMAGE_NAME} || true
+                    docker rm ${IMAGE_NAME} || true
+                    docker run -d \
+                      --network jenkins1 \
+                      -p 5000:5000 \
+                      --name ${IMAGE_NAME} \
+                      ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                echo 'Running health check...'
+                sh '''
+                    sleep 5
+                    curl -f http://localhost:5000/health
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Pipeline completed successfully - app running on port 5000'
+        }
+        failure {
+            echo 'Pipeline failed - check logs above'
+        }
+    }
+}
+
+Key fixes summary:
+Fix	What changed
+Unit Test	Runs directly with pip3 + python3 -m pytest — no Docker needed
+OWASP	Added chmod 777 on both report and data folders
+OWASP cache	Added owasp-data volume — NVD DB won't re-download every run
+Health Check	Changed http://simple-python-app:5000 → http://localhost:5000
+
+Do Step 1 first (install pip in Jenkins), then update the Jenkinsfile and run. Let me know the output.
+
+i am telling the scenerio
+like we make the pipeline for python, for node i want to create a new pipeline  or make some changes to run the node perfect 
+so , i want some solutions that one pipeline can run and deploy any code  with all the checks
+8:45 pm
+
+Ah, now I understand. You want a single universal pipeline that can handle any language/project automatically.
+
+This is called a Dynamic Multi-Language Pipeline.
+The Idea
+
+One Jenkinsfile → detects the project type → runs the right steps
+
+If requirements.txt found  → Python flow
+If package.json found      → Node flow
+If pom.xml found           → Java flow
+
+How it works
+groovy
+
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME = "my-app"
+        IMAGE_TAG  = "latest"
+        SONAR_URL  = "http://sonarqube:9000"
+        APP_DIR    = "simple-python-app"   // ← only change this per project
+    }
+
+    stages {
+
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+
+        stage('Checkout') {
+            steps {
+                sh 'git clone https://github.com/vanshPadia/DevSecOps.git .'
+            }
+        }
+
+        stage('Detect Language') {
+            steps {
+                script {
+                    def appPath = "${WORKSPACE}/${APP_DIR}"
+                    if (fileExists("${appPath}/requirements.txt")) {
+                        env.LANG_TYPE = "python"
+                    } else if (fileExists("${appPath}/package.json")) {
+                        env.LANG_TYPE = "node"
+                    } else if (fileExists("${appPath}/pom.xml")) {
+                        env.LANG_TYPE = "java"
+                    } else {
+                        error "Could not detect language. No requirements.txt, package.json or pom.xml found."
+                    }
+                    echo "Detected language: ${env.LANG_TYPE}"
+                }
+            }
+        }
+
+        stage('Unit Test') {
+            steps {
+                script {
+                    if (env.LANG_TYPE == "python") {
+                        sh """
+                            cd ${APP_DIR}
+                            pip3 install -r requirements.txt --break-system-packages
+                            python3 -m pytest -v --tb=short
+                        """
+                    } else if (env.LANG_TYPE == "node") {
+                        sh """
+                            cd ${APP_DIR}
+                            npm install
+                            npm test
+                        """
+                    } else if (env.LANG_TYPE == "java") {
+                        sh """
+                            cd ${APP_DIR}
+                            mvn test
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('OWASP Dependency Check') {
+            steps {
+                sh '''
+                    mkdir -p ${WORKSPACE}/owasp-report
+                    chmod 777 ${WORKSPACE}/owasp-report
+                    mkdir -p ${WORKSPACE}/owasp-data
+                    chmod 777 ${WORKSPACE}/owasp-data
+                    docker run --rm \
+                      -v ${WORKSPACE}/${APP_DIR}:/src \
+                      -v ${WORKSPACE}/owasp-report:/report \
+                      -v ${WORKSPACE}/owasp-data:/usr/share/dependency-check/data \
+                      owasp/dependency-check \
+                      --scan /src \
+                      --format HTML \
+                      --out /report \
+                      --project ${IMAGE_NAME}
+                '''
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                    sh """
+                        docker run --rm \
+                          --network jenkins1 \
+                          -e SONAR_HOST_URL=${SONAR_URL} \
+                          -e SONAR_TOKEN=${SONAR_TOKEN} \
+                          -v ${WORKSPACE}/${APP_DIR}:/usr/src \
+                          sonarsource/sonar-scanner-cli \
+                          -Dsonar.projectKey=${IMAGE_NAME} \
+                          -Dsonar.sources=.
+                    """
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                sh """
+                    cd ${APP_DIR}
+                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                """
+            }
+        }
+
+        stage('Trivy Image Scan') {
+            steps {
+                sh """
+                    trivy image \
+                      --exit-code 0 \
+                      --severity HIGH,CRITICAL \
+                      --format table \
+                      ${IMAGE_NAME}:${IMAGE_TAG}
+                """
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                script {
+                    def port = "5000"
+                    if (env.LANG_TYPE == "node") {
+                        port = "3000"
+                    } else if (env.LANG_TYPE == "java") {
+                        port = "8081"
+                    }
+                    env.APP_PORT = port
+
+                    sh """
+                        docker stop ${IMAGE_NAME} || true
+                        docker rm ${IMAGE_NAME} || true
+                        docker run -d \
+                          --network jenkins1 \
+                          -p ${port}:${port} \
+                          --name ${IMAGE_NAME} \
+                          ${IMAGE_NAME}:${IMAGE_TAG}
+                    """
+                }
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                sh """
+                    sleep 5
+                    curl -f http://localhost:${APP_PORT}/health
+                """
+            }
+        }
+
+        stage('DAST - OWASP ZAP') {
+            when {
+                expression { env.LANG_TYPE == "node" || env.LANG_TYPE == "java" }
+            }
+            steps {
+                echo 'Running OWASP ZAP DAST scan...'
+                sh """
+                    mkdir -p ${WORKSPACE}/zap-report
+                    chmod 777 ${WORKSPACE}/zap-report
+                    docker run --rm \
+                      --network jenkins1 \
+                      -v ${WORKSPACE}/zap-report:/zap/wrk \
+                      ghcr.io/zaproxy/zaproxy:stable \
+                      zap-baseline.py \
+                      -t http://${IMAGE_NAME}:${APP_PORT} \
+                      -r zap-report.html \
+                      -I
+                """
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Pipeline completed - ${IMAGE_NAME} running on port ${APP_PORT}"
+        }
+        failure {
+            echo 'Pipeline failed - check logs above'
+        }
+    }
+}
+
+How to use this for different projects
+
+You only change 2 things at the top:
+groovy
+
+IMAGE_NAME = "simple-node-app"   // ← change this
+APP_DIR    = "simple-node-app"   // ← change this
+
+That's it. Everything else is automatic.
+What this pipeline does smartly
+Feature	How
+Auto detects language	Checks for requirements.txt / package.json / pom.xml
+Runs correct unit test	pytest / jest / mvn based on detection
+Auto sets port	Python=5000, Node=3000, Java=8081
+DAST only for Node/Java	ZAP skipped for Python by default
+Same OWASP + Sonar + Trivy	Works for all languages
+
+Want me to make this even more dynamic where APP_DIR and IMAGE_NAME are passed as Jenkins parameters so you don't even touch the Jenkinsfile — just enter the values when triggering the build?
+
+can we make more simple pipeline , like all the configration part like installation dependencey for the app , run correct unit test , this can configure outside from the pipeline so it will reduce the pipeline and also more dynamic , we can make one fution on the pipeline , to check the code is node or python from there extence , like something
+8:49 pm
+
+Yes, great thinking. This is a cleaner architecture. The idea is:
+
+Pipeline only orchestrates. All logic lives outside.
+The Architecture
+
+repo/
+├── Jenkinsfile                  ← only stages, no logic
+├── pipeline-config.yml          ← all project config lives here
+└── scripts/
+    ├── detect.sh                ← detects language
+    ├── install.sh               ← installs dependencies
+    ├── test.sh                  ← runs correct unit test
+    └── deploy.sh                ← handles deploy logic
+
+How it works
+
+Jenkinsfile reads config → calls scripts → scripts do the work
+
+Jenkinsfile becomes just:
+groovy
+
+stage('Unit Test') {
+    steps {
+        sh './scripts/test.sh'
+    }
+}
+
+No language logic inside pipeline at all.
+Step 1 — pipeline-config.yml
+bash
+
+cat > pipeline-config.yml << 'EOF'
+app_dir: simple-python-app
+image_name: simple-python-app
+image_tag: latest
+app_port: 5000
+sonar_project_key: simple-python-app
+sonar_url: http://sonarqube:9000
+network: jenkins1
+EOF
+
+To switch to Node — just change this file. Nothing else.
+Step 2 — scripts/detect.sh
+bash
+
+mkdir -p scripts
+
+cat > scripts/detect.sh << 'EOF'
+#!/bin/bash
+APP_DIR=$(grep 'app_dir' pipeline-config.yml | awk '{print $2}')
+
+if [ -f "${APP_DIR}/requirements.txt" ]; then
+    echo "python"
+elif [ -f "${APP_DIR}/package.json" ]; then
+    echo "node"
+elif [ -f "${APP_DIR}/pom.xml" ]; then
+    echo "java"
+else
+    echo "unknown"
+    exit 1
+fi
+EOF
+chmod +x scripts/detect.sh
+
+Step 3 — scripts/install.sh
+bash
+
+cat > scripts/install.sh << 'EOF'
+#!/bin/bash
+set -e
+LANG_TYPE=$(./scripts/detect.sh)
+APP_DIR=$(grep 'app_dir' pipeline-config.yml | awk '{print $2}')
+
+echo "Installing dependencies for: ${LANG_TYPE}"
+
+case $LANG_TYPE in
+  python)
+    pip3 install -r ${APP_DIR}/requirements.txt --break-system-packages
+    ;;
+  node)
+    cd ${APP_DIR} && npm install
+    ;;
+  java)
+    cd ${APP_DIR} && mvn dependency:resolve
+    ;;
+esac
+EOF
+chmod +x scripts/install.sh
+
+Step 4 — scripts/test.sh
+bash
+
+cat > scripts/test.sh << 'EOF'
+#!/bin/bash
+set -e
+LANG_TYPE=$(./scripts/detect.sh)
+APP_DIR=$(grep 'app_dir' pipeline-config.yml | awk '{print $2}')
+
+echo "Running tests for: ${LANG_TYPE}"
+
+case $LANG_TYPE in
+  python)
+    cd ${APP_DIR} && python3 -m pytest -v --tb=short
+    ;;
+  node)
+    cd ${APP_DIR} && npm test
+    ;;
+  java)
+    cd ${APP_DIR} && mvn test
+    ;;
+esac
+EOF
+chmod +x scripts/test.sh
+
+Step 5 — scripts/deploy.sh
+bash
+
+cat > scripts/deploy.sh << 'EOF'
+#!/bin/bash
+set -e
+IMAGE_NAME=$(grep 'image_name' pipeline-config.yml | awk '{print $2}')
+IMAGE_TAG=$(grep 'image_tag' pipeline-config.yml | awk '{print $2}')
+APP_PORT=$(grep 'app_port' pipeline-config.yml | awk '{print $2}')
+NETWORK=$(grep 'network' pipeline-config.yml | awk '{print $2}')
+
+echo "Deploying ${IMAGE_NAME}:${IMAGE_TAG} on port ${APP_PORT}"
+
+docker stop ${IMAGE_NAME} || true
+docker rm ${IMAGE_NAME} || true
+docker run -d \
+  --network ${NETWORK} \
+  -p ${APP_PORT}:${APP_PORT} \
+  --name ${IMAGE_NAME} \
+  ${IMAGE_NAME}:${IMAGE_TAG}
+EOF
+chmod +x scripts/deploy.sh
+
+Step 6 — Clean Jenkinsfile
+groovy
+
+pipeline {
+    agent any
+
+    environment {
+        SONAR_URL = "http://sonarqube:9000"
+    }
+
+    stages {
+
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+
+        stage('Checkout') {
+            steps {
+                sh 'git clone https://github.com/vanshPadia/DevSecOps.git .'
+            }
+        }
+
+        stage('Detect Language') {
+            steps {
+                script {
+                    env.LANG_TYPE = sh(script: './scripts/detect.sh', returnStdout: true).trim()
+                    echo "Detected: ${env.LANG_TYPE}"
+                }
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                sh './scripts/install.sh'
+            }
+        }
+
+        stage('Unit Test') {
+            steps {
+                sh './scripts/test.sh'
+            }
+        }
+
+        stage('OWASP Dependency Check') {
+            steps {
+                sh '''
+                    mkdir -p ${WORKSPACE}/owasp-report ${WORKSPACE}/owasp-data
+                    chmod 777 ${WORKSPACE}/owasp-report ${WORKSPACE}/owasp-data
+                    APP_DIR=$(grep app_dir pipeline-config.yml | awk '{print $2}')
+                    IMAGE_NAME=$(grep image_name pipeline-config.yml | awk '{print $2}')
+                    docker run --rm \
+                      -v ${WORKSPACE}/${APP_DIR}:/src \
+                      -v ${WORKSPACE}/owasp-report:/report \
+                      -v ${WORKSPACE}/owasp-data:/usr/share/dependency-check/data \
+                      owasp/dependency-check \
+                      --scan /src \
+                      --format HTML \
+                      --out /report \
+                      --project ${IMAGE_NAME}
+                '''
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                    sh '''
+                        APP_DIR=$(grep app_dir pipeline-config.yml | awk '{print $2}')
+                        IMAGE_NAME=$(grep image_name pipeline-config.yml | awk '{print $2}')
+                        NETWORK=$(grep network pipeline-config.yml | awk '{print $2}')
+                        docker run --rm \
+                          --network ${NETWORK} \
+                          -e SONAR_HOST_URL=${SONAR_URL} \
+                          -e SONAR_TOKEN=${SONAR_TOKEN} \
+                          -v ${WORKSPACE}/${APP_DIR}:/usr/src \
+                          sonarsource/sonar-scanner-cli \
+                          -Dsonar.projectKey=${IMAGE_NAME} \
+                          -Dsonar.sources=.
+                    '''
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                sh '''
+                    APP_DIR=$(grep app_dir pipeline-config.yml | awk '{print $2}')
+                    IMAGE_NAME=$(grep image_name pipeline-config.yml | awk '{print $2}')
+                    IMAGE_TAG=$(grep image_tag pipeline-config.yml | awk '{print $2}')
+                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ./${APP_DIR}
+                '''
+            }
+        }
+
+        stage('Trivy Image Scan') {
+            steps {
+                sh '''
+                    IMAGE_NAME=$(grep image_name pipeline-config.yml | awk '{print $2}')
+                    IMAGE_TAG=$(grep image_tag pipeline-config.yml | awk '{print $2}')
+                    trivy image \
+                      --exit-code 0 \
+                      --severity HIGH,CRITICAL \
+                      --format table \
+                      ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                sh './scripts/deploy.sh'
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                sh '''
+                    APP_PORT=$(grep app_port pipeline-config.yml | awk '{print $2}')
+                    sleep 5
+                    curl -f http://localhost:${APP_PORT}/health
+                '''
+            }
+        }
+
+        stage('DAST - OWASP ZAP') {
+            when {
+                expression { env.LANG_TYPE != 'python' }
+            }
+            steps {
+                sh '''
+                    IMAGE_NAME=$(grep image_name pipeline-config.yml | awk '{print $2}')
+                    APP_PORT=$(grep app_port pipeline-config.yml | awk '{print $2}')
+                    NETWORK=$(grep network pipeline-config.yml | awk '{print $2}')
+                    mkdir -p ${WORKSPACE}/zap-report
+                    chmod 777 ${WORKSPACE}/zap-report
+                    docker run --rm \
+                      --network ${NETWORK} \
+                      -v ${WORKSPACE}/zap-report:/zap/wrk \
+                      ghcr.io/zaproxy/zaproxy:stable \
+                      zap-baseline.py \
+                      -t http://${IMAGE_NAME}:${APP_PORT} \
+                      -r zap-report.html \
+                      -I
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Pipeline completed successfully'
+        }
+        failure {
+            echo 'Pipeline failed - check logs above'
+        }
+    }
+}
+
+To switch from Python to Node — only change pipeline-config.yml:
+yaml
+
+app_dir: simple-node-app
+image_name: simple-node-app
+image_tag: latest
+app_port: 3000
+sonar_project_key: simple-node-app
+sonar_url: http://sonarqube:9000
+network: jenkins1
+
+Push everything:
+bash
+
+git add scripts/ pipeline-config.yml Jenkinsfile
+git commit -m "dynamic pipeline with external config and scripts"
+git push
+
+Want to test this with the Python app first?
+You are out of free messages until 12:20 AM
+Get more
+
+
+Claude is AI and can make mistakes. Please double-check responses.
+
