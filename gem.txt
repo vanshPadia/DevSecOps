@@ -1,0 +1,1108 @@
+ Conversation with Gemini
+
+i have this pipeline
+
+pipeline {
+
+agent any
+
+
+environment {
+
+IMAGE_NAME = "simple-python-app"
+
+IMAGE_TAG = "latest"
+
+SONAR_URL = "http://sonarqube:9000"
+
+}
+
+
+stages {
+
+
+stage('Clean Workspace') {
+
+steps {
+
+cleanWs()
+
+}
+
+}
+
+
+stage('Checkout') {
+
+steps {
+
+echo 'Checking out code...'
+
+sh 'git clone https://github.com/vanshPadia/DevSecOps.git .'
+
+}
+
+}
+
+
+stage('Unit Test') {
+
+steps {
+
+echo 'Running unit tests...'
+
+sh '''
+
+cd simple-python-app
+
+pip3 install -r requirements.txt --break-system-packages
+
+python3 -m pytest test_app.py -v --tb=short
+
+'''
+
+}
+
+}
+
+
+stage('OWASP Dependency Check') {
+
+steps {
+
+echo 'Running OWASP Dependency Check...'
+
+sh '''
+
+mkdir -p ${WORKSPACE}/owasp-report
+
+chmod 777 ${WORKSPACE}/owasp-report
+
+mkdir -p ${WORKSPACE}/owasp-data
+
+chmod 777 ${WORKSPACE}/owasp-data
+
+docker run --rm \
+
+-v ${WORKSPACE}/simple-python-app:/src \
+
+-v ${WORKSPACE}/owasp-report:/report \
+
+-v ${WORKSPACE}/owasp-data:/usr/share/dependency-check/data \
+
+owasp/dependency-check \
+
+--scan /src \
+
+--format HTML \
+
+--out /report \
+
+--project simple-python-app
+
+'''
+
+}
+
+}
+
+
+stage('SonarQube Analysis') {
+
+steps {
+
+echo 'Running SonarQube analysis...'
+
+withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+
+sh '''
+
+docker run --rm \
+
+--network jenkins1 \
+
+-e SONAR_HOST_URL=${SONAR_URL} \
+
+-e SONAR_TOKEN=${SONAR_TOKEN} \
+
+-v ${WORKSPACE}/simple-python-app:/usr/src \
+
+sonarsource/sonar-scanner-cli \
+
+-Dsonar.projectKey=simple-python-app \
+
+-Dsonar.sources=.
+
+'''
+
+}
+
+}
+
+}
+
+
+stage('Build Docker Image') {
+
+steps {
+
+echo 'Building Docker image...'
+
+sh '''
+
+cd simple-python-app
+
+docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+
+'''
+
+}
+
+}
+
+
+stage('Trivy Image Scan') {
+
+steps {
+
+echo 'Scanning image with Trivy...'
+
+sh '''
+
+trivy image \
+
+--exit-code 0 \
+
+--severity HIGH,CRITICAL \
+
+--format table \
+
+${IMAGE_NAME}:${IMAGE_TAG}
+
+'''
+
+}
+
+}
+
+
+stage('Deploy') {
+
+steps {
+
+echo 'Deploying container...'
+
+sh '''
+
+docker stop ${IMAGE_NAME} || true
+
+docker rm ${IMAGE_NAME} || true
+
+docker run -d \
+
+--network jenkins1 \
+
+-p 5000:5000 \
+
+--name ${IMAGE_NAME} \
+
+${IMAGE_NAME}:${IMAGE_TAG}
+
+'''
+
+}
+
+}
+
+
+stage('Health Check') {
+
+steps {
+
+echo 'Running health check...'
+
+sh '''
+
+sleep 5
+
+curl -f http://localhost:5000/health
+
+'''
+
+}
+
+}
+
+}
+
+
+post {
+
+success {
+
+echo 'Pipeline completed successfully - app running on port 5000'
+
+}
+
+failure {
+
+echo 'Pipeline failed - check logs above'
+
+}
+
+}
+
+}
+
+can you help to find the solutions , what is best way to do that . like it is the pipeline that is running python app , now iwant to run the othere app like node , java with the same pipeline , so i want dynamic pipeline that can help this is my questions , tell the answer
+
+To run multiple different tech stacks (like Python, Node.js, or Java) through a single Jenkins pipeline without duplicating code, you need to make your pipeline dynamic and parameterized.
+
+The best way to achieve this in Jenkins is by using Conditional Stages (when blocks) and Pipeline Parameters. This allows the pipeline to adapt its behavior based on the type of application you tell it to build.
+
+Here is the best solution to transform your static Python pipeline into a dynamic, multi-language DevSecOps pipeline.
+The Dynamic Jenkinsfile
+Groovy
+
+pipeline {
+    agent any
+
+    parameters {
+        choice(name: 'APP_TYPE', choices: ['python', 'node', 'java'], description: 'Select the application technology stack')
+        string(name: 'REPO_URL', defaultValue: 'https://github.com/vanshPadia/DevSecOps.git', description: 'Git Repository URL')
+        string(name: 'SUB_DIR', defaultValue: 'simple-python-app', description: 'Subdirectory where the app code lives')
+        string(name: 'IMAGE_NAME', defaultValue: 'my-dynamic-app', description: 'Docker Image Name')
+        string(name: 'IMAGE_TAG', defaultValue: 'latest', description: 'Docker Image Tag')
+        string(name: 'APP_PORT', defaultValue: '5000', description: 'Container Port to expose')
+    }
+
+    environment {
+        SONAR_URL = "http://sonarqube:9000"
+    }
+
+    stages {
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+
+        stage('Checkout') {
+            steps {
+                echo "Checking out code from ${params.REPO_URL}..."
+                sh "git clone ${params.REPO_URL} ."
+            }
+        }
+
+        // ==========================================
+        // DYNAMIC TESTING STAGES
+        // ==========================================
+        stage('Unit Test - Python') {
+            when { expression { params.APP_TYPE == 'python' } }
+            steps {
+                echo 'Running Python unit tests...'
+                sh """
+                    cd ${params.SUB_DIR}
+                    pip3 install -r requirements.txt --break-system-packages || pip3 install -r requirements.txt
+                    python3 -m pytest test_app.py -v --tb=short
+                """
+            }
+        }
+
+        stage('Unit Test - Node.js') {
+            when { expression { params.APP_TYPE == 'node' } }
+            steps {
+                echo 'Running Node.js unit tests...'
+                sh """
+                    cd ${params.SUB_DIR}
+                    npm install
+                    npm test
+                """
+            }
+        }
+
+        stage('Unit Test - Java') {
+            when { expression { params.APP_TYPE == 'java' } }
+            steps {
+                echo 'Running Java unit tests...'
+                sh """
+                    cd ${params.SUB_DIR}
+                    ./mvnw test || mvn test
+                """
+            }
+        }
+
+        // ==========================================
+        // SECURITY & ANALYSIS STAGES (Language Agnostic)
+        // ==========================================
+        stage('OWASP Dependency Check') {
+            steps {
+                echo 'Running OWASP Dependency Check...'
+                sh """
+                    mkdir -p ${WORKSPACE}/owasp-report ${WORKSPACE}/owasp-data
+                    chmod 777 ${WORKSPACE}/owasp-report ${WORKSPACE}/owasp-data
+                    docker run --rm \
+                      -v ${WORKSPACE}/${params.SUB_DIR}:/src \
+                      -v ${WORKSPACE}/owasp-report:/report \
+                      -v ${WORKSPACE}/owasp-data:/usr/share/dependency-check/data \
+                      owasp/dependency-check \
+                      --scan /src \
+                      --format HTML \
+                      --out /report \
+                      --project ${params.IMAGE_NAME}
+                """
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                echo 'Running SonarQube analysis...'
+                withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                    sh """
+                        docker run --rm \
+                          --network jenkins1 \
+                          -e SONAR_HOST_URL=${SONAR_URL} \
+                          -e SONAR_TOKEN=${SONAR_TOKEN} \
+                          -v ${WORKSPACE}/${params.SUB_DIR}:/usr/src \
+                          sonarsource/sonar-scanner-cli \
+                          -Dsonar.projectKey=${params.IMAGE_NAME} \
+                          -Dsonar.sources=.
+                    """
+                }
+            }
+        }
+
+        // ==========================================
+        // DOCKER BUILD & DEPLOYMENT STAGES (Dynamic via parameters)
+        // ==========================================
+        stage('Build Docker Image') {
+            steps {
+                echo "Building Docker image for ${params.IMAGE_NAME}..."
+                sh """
+                    cd ${params.SUB_DIR}
+                    docker build -t ${params.IMAGE_NAME}:${params.IMAGE_TAG} .
+                """
+            }
+        }
+
+        stage('Trivy Image Scan') {
+            steps {
+                echo 'Scanning image with Trivy...'
+                sh """
+                    trivy image \
+                      --exit-code 0 \
+                      --severity HIGH,CRITICAL \
+                      --format table \
+                      ${params.IMAGE_NAME}:${params.IMAGE_TAG}
+                """
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                echo "Deploying container on port ${params.APP_PORT}..."
+                sh """
+                    docker stop ${params.IMAGE_NAME} || true
+                    docker rm ${params.IMAGE_NAME} || true
+                    docker run -d \
+                      --network jenkins1 \
+                      -p ${params.APP_PORT}:${params.APP_PORT} \
+                      --name ${params.IMAGE_NAME} \
+                      ${params.IMAGE_NAME}:${params.IMAGE_TAG}
+                """
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                echo 'Running health check...'
+                sh """
+                    sleep 7
+                    curl -f http://localhost:${params.APP_PORT}/health || curl -f http://localhost:${params.APP_PORT}/
+                """
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Pipeline completed successfully - app running on port ${params.APP_PORT}"
+        }
+        failure {
+            echo 'Pipeline failed - check logs above'
+        }
+    }
+}
+
+Why this is the best approach
+
+    The when { expression { ... } } Block: This is the magic key. Instead of trying to write a complex shell script that handles Python, Node, and Java all in one block, Jenkins will simply skip the stages that don't match your selected APP_TYPE.
+
+    Environment to Parameters: Changing hardcoded variables (like simple-python-app) into params.SUB_DIR and params.IMAGE_NAME makes the build, scan, and deployment stages completely generic.
+
+    Container-Driven Scanning: Because your OWASP Dependency Check and SonarQube run inside standard Docker containers, they natively know how to scan multiple languages without you needing to install Node, Java, or Python tools directly onto your Jenkins agent host.
+
+    String Interpolation: Notice the change from single quotes (''') to double quotes (""") in the shell steps where params are used. This allows Jenkins to seamlessly inject your parameter selections directly into the shell commands.
+
+How to use it:
+
+    Paste this code into your Jenkins pipeline.
+
+    Run the pipeline once manually. It might fail or use defaults on the first try, but this forces Jenkins to read the script and register the parameters.
+
+    For all future runs, you will see a "Build with Parameters" button where you can select python, node, or java, change the Git repo, and define custom ports on the fly.
+
+pipeline {
+
+agent any
+
+
+environment {
+
+IMAGE_NAME = "simple-python-app"
+
+IMAGE_TAG = "latest"
+
+SONAR_URL = "http://sonarqube:9000"
+
+}
+
+
+stages {
+
+
+stage('Clean Workspace') {
+
+steps {
+
+cleanWs()
+
+}
+
+}
+
+
+stage('Checkout') {
+
+steps {
+
+echo 'Checking out code...'
+
+sh 'git clone https://github.com/vanshPadia/DevSecOps.git .'
+
+}
+
+}
+
+
+stage('Unit Test') {
+
+steps {
+
+echo 'Running unit tests...'
+
+sh '''
+
+cd simple-python-app
+
+pip3 install -r requirements.txt --break-system-packages
+
+python3 -m pytest test_app.py -v --tb=short
+
+'''
+
+}
+
+}
+
+
+stage('OWASP Dependency Check') {
+
+steps {
+
+echo 'Running OWASP Dependency Check...'
+
+sh '''
+
+mkdir -p ${WORKSPACE}/owasp-report
+
+chmod 777 ${WORKSPACE}/owasp-report
+
+mkdir -p ${WORKSPACE}/owasp-data
+
+chmod 777 ${WORKSPACE}/owasp-data
+
+docker run --rm \
+
+-v ${WORKSPACE}/simple-python-app:/src \
+
+-v ${WORKSPACE}/owasp-report:/report \
+
+-v ${WORKSPACE}/owasp-data:/usr/share/dependency-check/data \
+
+owasp/dependency-check \
+
+--scan /src \
+
+--format HTML \
+
+--out /report \
+
+--project simple-python-app
+
+'''
+
+}
+
+}
+
+
+stage('SonarQube Analysis') {
+
+steps {
+
+echo 'Running SonarQube analysis...'
+
+withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+
+sh '''
+
+docker run --rm \
+
+--network jenkins1 \
+
+-e SONAR_HOST_URL=${SONAR_URL} \
+
+-e SONAR_TOKEN=${SONAR_TOKEN} \
+
+-v ${WORKSPACE}/simple-python-app:/usr/src \
+
+sonarsource/sonar-scanner-cli \
+
+-Dsonar.projectKey=simple-python-app \
+
+-Dsonar.sources=.
+
+'''
+
+}
+
+}
+
+}
+
+
+stage('Build Docker Image') {
+
+steps {
+
+echo 'Building Docker image...'
+
+sh '''
+
+cd simple-python-app
+
+docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+
+'''
+
+}
+
+}
+
+
+stage('Trivy Image Scan') {
+
+steps {
+
+echo 'Scanning image with Trivy...'
+
+sh '''
+
+trivy image \
+
+--exit-code 0 \
+
+--severity HIGH,CRITICAL \
+
+--format table \
+
+${IMAGE_NAME}:${IMAGE_TAG}
+
+'''
+
+}
+
+}
+
+
+stage('Deploy') {
+
+steps {
+
+echo 'Deploying container...'
+
+sh '''
+
+docker stop ${IMAGE_NAME} || true
+
+docker rm ${IMAGE_NAME} || true
+
+docker run -d \
+
+--network jenkins1 \
+
+-p 5000:5000 \
+
+--name ${IMAGE_NAME} \
+
+${IMAGE_NAME}:${IMAGE_TAG}
+
+'''
+
+}
+
+}
+
+
+stage('Health Check') {
+
+steps {
+
+echo 'Running health check...'
+
+sh '''
+
+sleep 5
+
+curl -f http://localhost:5000/health
+
+'''
+
+}
+
+}
+
+}
+
+
+post {
+
+success {
+
+echo 'Pipeline completed successfully - app running on port 5000'
+
+}
+
+failure {
+
+echo 'Pipeline failed - check logs above'
+
+}
+
+}
+
+}
+
+is this a working pipeline
+
+Based on a quick review of your script, yes, this is syntactically a working Jenkins pipeline, but it relies on a few critical external assumptions. If those assumptions aren't met in your actual Jenkins environment, it will fail during execution.
+
+Here is a breakdown of what works, what might break, and how to ensure it runs successfully.
+What works perfectly
+
+    Valid Declarative Syntax: The structural blocks (pipeline, agent, stages, post) are configured correctly.
+
+    Jenkins Variables: Using ${WORKSPACE} inside the single-quoted block (''') works perfectly because Jenkins interpolates environment variables inside shell steps before handing them to the OS.
+
+    Graceful Docker Restarts: Using || true on docker stop and docker rm is excellent practice; it prevents the pipeline from crashing if the container doesn't exist yet.
+
+⚠️ Critical Requirements (Why it might fail)
+
+For this pipeline to pass successfully, your Jenkins setup must meet these 5 conditions:
+1. The Git Repository Layout
+
+The script clones a repository and immediately attempts to run cd simple-python-app.
+
+    Must have: The repository https://github.com/vanshPadia/DevSecOps.git must contain a folder named exactly simple-python-app at its root, and inside that folder, there must be a requirements.txt, test_app.py, and a Dockerfile.
+
+2. Local Tools Installed on the Jenkins Agent
+
+Because you are running the Unit Test and Trivy stages directly on the host machine (not inside containers), your Jenkins agent machine must have these pre-installed:
+
+    python3 and pip3
+
+    pytest
+
+    trivy CLI
+
+3. Docker Permissions and Networking
+
+    Permissions: The jenkins user on your agent machine must have permission to run Docker commands (i.e., it must be part of the docker group).
+
+    Custom Network: In the SonarQube and Deploy stages, you use --network jenkins1. This Docker network must already exist on your agent machine. If it doesn't, create it manually via terminal using:
+    Bash
+
+    docker network create jenkins1
+
+4. Credentials & SonarQube Connectivity
+
+    Under SonarQube Analysis, you reference credentialsId: 'sonar-token'. You must go into your Jenkins Dashboard -> Manage Jenkins -> Credentials and create a secret text credential with that exact ID.
+
+    The container named sonarqube must be up and running on the jenkins1 network for the URL http://sonarqube:9000 to resolve inside the container.
+
+5. Health Check Endpoint
+
+    Your Python application's web server (e.g., Flask or FastAPI) must actually have a route configured at /health that returns a 200 OK status code. If it returns a 404 or doesn't start within 5 seconds, the curl -f command will fail and tank the whole pipeline build.
+
+Summary
+
+If your Jenkins agent has Python3, Trivy, and Docker installed, your credentials/networks are mapped, and your app repository matches that folder structure, this pipeline will run completely successfully.
+
+in the senerio , my thinking is that , we can createa configration files , that can helps the jenkisfile not to changes every time , when the code pull the funtion we create it will check the code that is comming from the gitlab or and any repo , on the base of that it will install dependency and take application configration from the config file , that is outside the jenkins piplien , it will help to select the docker o run the particulaer appliction , in the config file every thing is writen like , port , insatll dependency setps , any thing , it help to pass the test
+
+Your thinking is absolutely spot on and aligns perfectly with modern Enterprise DevOps Best Practices. Hardcoding stage logic or maintaining a massive list of when parameters inside a Jenkinsfile quickly becomes a maintenance nightmare.
+
+Moving application-specific configurations into a dedicated file (like pipeline-config.yaml or app-config.json) stored right inside the application's Git repository is the gold standard. This pattern is often called Configuration-as-Code or Metadata-Driven Pipelines.
+
+Here is how you can implement this architectural pattern cleanly using YAML and a single, universal Jenkinsfile.
+Step 1: Create the Configuration File (pipeline-config.yaml)
+
+Every application (Python, Node, Java, etc.) will keep this file at the root of its Git repository. The pipeline will read it dynamically.
+
+For a Python App:
+YAML
+
+app_metadata:
+  name: "simple-python-app"
+  sub_dir: "simple-python-app"
+  port: "5000"
+  health_endpoint: "/health"
+
+build_config:
+  engine: "docker"
+  image_name: "simple-python-app"
+  image_tag: "latest"
+
+test_config:
+  commands:
+    - "pip3 install -r requirements.txt --break-system-packages || pip3 install -r requirements.txt"
+    - "python3 -m pytest test_app.py -v --tb=short"
+
+For a Node.js App (in its own repo):
+YAML
+
+app_metadata:
+  name: "node-auth-service"
+  sub_dir: "."
+  port: "3000"
+  health_endpoint: "/api/status"
+
+build_config:
+  engine: "docker"
+  image_name: "node-auth-service"
+  image_tag: "1.0.0"
+
+test_config:
+  commands:
+    - "npm install"
+    - "npm test"
+
+Step 2: The Universal, Dynamic Jenkinsfile
+
+To make this work, your Jenkins controller needs the Pipeline Utility Steps plugin installed (which provides the readYaml utility).
+
+This pipeline reads the configuration file right after checkout and maps the parameters dynamically into variables and loops.
+Groovy
+
+pipeline {
+    agent any
+
+    environment {
+        SONAR_URL = "http://sonarqube:9000"
+        // This variable will hold our parsed configuration object
+        CONFIG    = "" 
+    }
+
+    stages {
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+
+        stage('Checkout & Load Config') {
+            steps {
+                echo 'Checking out code...'
+                // Clones the repo targeting this pipeline execution
+                checkout scm 
+                
+                script {
+                    // Check if the config file exists in the repo
+                    if (fileExists('pipeline-config.yaml')) {
+                        echo 'Found pipeline-config.yaml. Loading application parameters...'
+                        CONFIG = readYaml file: 'pipeline-config.yaml'
+                    } else {
+                        error 'Pipeline aborted: pipeline-config.yaml missing from repository root!'
+                    }
+                }
+            }
+        }
+
+        stage('Dynamic Unit Tests') {
+            steps {
+                script {
+                    echo "Running test commands configured for ${CONFIG.app_metadata.name}..."
+                    
+                    // Loop through whatever test commands the developer defined in the YAML file
+                    def testCommands = CONFIG.test_config.commands
+                    for (int i = 0; i < testCommands.size(); i++) {
+                        sh """
+                            cd ${CONFIG.app_metadata.sub_dir}
+                            ${testCommands[i]}
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('OWASP Dependency Check') {
+            steps {
+                echo "Running security scan on sub-directory: ${CONFIG.app_metadata.sub_dir}"
+                sh """
+                    mkdir -p ${WORKSPACE}/owasp-report ${WORKSPACE}/owasp-data
+                    chmod 777 ${WORKSPACE}/owasp-report ${WORKSPACE}/owasp-data
+                    docker run --rm \
+                      -v ${WORKSPACE}/${CONFIG.app_metadata.sub_dir}:/src \
+                      -v ${WORKSPACE}/owasp-report:/report \
+                      -v ${WORKSPACE}/owasp-data:/usr/share/dependency-check/data \
+                      owasp/dependency-check \
+                      --scan /src \
+                      --format HTML \
+                      --out /report \
+                      --project ${CONFIG.app_metadata.name}
+                """
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                    sh """
+                        docker run --rm \
+                          --network jenkins1 \
+                          -e SONAR_HOST_URL=${SONAR_URL} \
+                          -e SONAR_TOKEN=${SONAR_TOKEN} \
+                          -v ${WORKSPACE}/${CONFIG.app_metadata.sub_dir}:/usr/src \
+                          sonarsource/sonar-scanner-cli \
+                          -Dsonar.projectKey=${CONFIG.app_metadata.name} \
+                          -Dsonar.sources=.
+                    """
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                echo "Building container image using config parameters..."
+                sh """
+                    cd ${CONFIG.app_metadata.sub_dir}
+                    docker build -t ${CONFIG.build_config.image_name}:${CONFIG.build_config.image_tag} .
+                """
+            }
+        }
+
+        stage('Trivy Image Scan') {
+            steps {
+                sh """
+                    trivy image \
+                      --exit-code 0 \
+                      --severity HIGH,CRITICAL \
+                      --format table \
+                      ${CONFIG.build_config.image_name}:${CONFIG.build_config.image_tag}
+                """
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                echo "Deploying ${CONFIG.app_metadata.name} to port ${CONFIG.app_metadata.port}..."
+                sh """
+                    docker stop ${CONFIG.build_config.image_name} || true
+                    docker rm ${CONFIG.build_config.image_name} || true
+                    docker run -d \
+                      --network jenkins1 \
+                      -p ${CONFIG.app_metadata.port}:${CONFIG.app_metadata.port} \
+                      --name ${CONFIG.build_config.image_name} \
+                      ${CONFIG.build_config.image_name}:${CONFIG.build_config.image_tag}
+                """
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                script {
+                    echo "Validating deployment on port ${CONFIG.app_metadata.port}..."
+                    sleep 5
+                    sh "curl -f http://localhost:${CONFIG.app_metadata.port}${CONFIG.app_metadata.health_endpoint}"
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Pipeline completed successfully - ${CONFIG.app_metadata.name} is running!"
+        }
+        failure {
+            echo 'Pipeline failed - review execution logs.'
+        }
+    }
+}
+
+Why this solves your problem beautifully:
+
+    Zero Jenkins Modification: When a developer onboard a new Java or Node application, they do not touch Jenkins. They just drop a pipeline-config.yaml file into their repo, and this pipeline adapts instantly.
+
+    True Decoupling: The testing commands are an array (CONFIG.test_config.commands). The loop in the Dynamic Unit Tests stage iterates and executes each script execution sequentially regardless of whether it's npm test, pytest, or mvn test.
+
+    Flexible Architecture: Parameters like ports, internal directories, or image tagging strategies are fully decentralized. Developers own their app logic; DevOps owns the security/delivery pipeline wrapper.
+
+Would you like to explore converting this template into a globally shared library to make managing it across multiple repositories even easier?
+
+can we test this full working , start testing simple like no securety
+
+Let’s strip away the security scanners (SonarQube, OWASP, Trivy) and build a lean, lightweight version that focuses purely on proving your configuration-driven logic works.
+
+To test this locally or on your Jenkins instance without any extra plugins or heavy setups, we will use JSON instead of YAML, as Jenkins can parse JSON natively out-of-the-box using standard Groovy without requiring any external plugins.
+
+Here is how you can set up a quick, successful end-to-end test.
+Step 1: Create the Configuration File (pipeline-config.json)
+
+Create this file at the root of your application's repository.
+JSON
+
+{
+  "app_name": "simple-python-app",
+  "sub_dir": "simple-python-app",
+  "port": "5000",
+  "health_endpoint": "/health",
+  "test_commands": [
+    "pip3 install -r requirements.txt --break-system-packages || pip3 install -r requirements.txt",
+    "python3 -m pytest test_app.py -v --tb=short"
+  ]
+}
+
+Step 2: The Core Lightweight Jenkinsfile
+
+This script reads your configuration file, processes the dynamic steps, builds your Docker image, and runs a health validation check.
+Groovy
+
+import groovy.json.JsonSlurper
+
+pipeline {
+    agent any
+
+    environment {
+        // Global variable to store our configuration mapping
+        CONFIG = ""
+    }
+
+    stages {
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+
+        stage('Checkout & Load Config') {
+            steps {
+                echo 'Checking out code...'
+                // Automatically points to your configured pipeline repository
+                checkout scm 
+
+                script {
+                    if (fileExists('pipeline-config.json')) {
+                        echo 'Found pipeline-config.json. Parsing configurations...'
+                        def jsonFile = readFile('pipeline-config.json')
+                        // Read and convert the file contents into an accessible Groovy Object
+                        CONFIG = new JsonSlurper().parseText(jsonFile)
+                        echo "Successfully loaded configuration for: ${CONFIG.app_name}"
+                    } else {
+                        error 'Pipeline halted: pipeline-config.json not found at repository root!'
+                    }
+                }
+            }
+        }
+
+        stage('Dynamic Unit Tests') {
+            steps {
+                script {
+                    echo "Executing dynamically defined test commands..."
+                    def commands = CONFIG.test_commands
+                    
+                    for (int i = 0; i < commands.size(); i++) {
+                        echo "Running step: ${commands[i]}"
+                        sh """
+                            cd ${CONFIG.sub_dir}
+                            ${commands[i]}
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                echo "Building Docker image: ${CONFIG.app_name}:latest"
+                sh """
+                    cd ${CONFIG.sub_dir}
+                    docker build -t ${CONFIG.app_name}:latest .
+                """
+            }
+        }
+
+        stage('Deploy App Container') {
+            steps {
+                echo "Spinning up application on port ${CONFIG.port}..."
+                sh """
+                    docker stop ${CONFIG.app_name} || true
+                    docker rm ${CONFIG.app_name} || true
+                    docker run -d \
+                      -p ${CONFIG.port}:${CONFIG.port} \
+                      --name ${CONFIG.app_name} \
+                      ${CONFIG.app_name}:latest
+                """
+            }
+        }
+
+        stage('Health Check Verification') {
+            steps {
+                script {
+                    echo "Checking service response at port ${CONFIG.port}..."
+                    // Wait briefly for the internal application process to bind to its port
+                    sleep 5
+                    sh "curl -f http://localhost:${CONFIG.port}${CONFIG.health_endpoint}"
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "SUCCESS: ${CONFIG.app_name} is running completely configuration-driven!"
+        }
+        failure {
+            echo "FAILURE: The build failed. Review execution logs."
+        }
+    }
+}
+
+How to Run this Test:
+
+    Commit Files: Commit both pipeline-config.json and the modified Jenkinsfile directly to your code repository.
+
+    Execute Jenkins Job: Head over to Jenkins, trigger a manual run on your project pipeline, and check the logs.
+
+You will see Jenkins completely dynamically adjusting its execution path, directories, testing commands, and ports directly derived from your JSON instructions! Once this baseline is rock-solid, we can easily plug your security scanners right back into it.
+

@@ -1,0 +1,463 @@
+ 1993  cd DevSecOps/
+ 1994  ls
+ 1995  git branch 
+ 1996  git remote -v  
+ 1997  mkdir simple-python-app && cd simple-python-app
+ 1998  cat > app.py << 'EOF'
+from flask import Flask
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Hello from Python App - v1.0"
+
+@app.route("/health")
+def health():
+    return {"status": "ok"}, 200
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
+EOF
+
+ 1999  cat > requirements.txt << 'EOF'
+flask==3.0.3
+EOF
+
+ 2000  cat > Dockerfile << 'EOF'
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app.py .
+
+EXPOSE 5000
+
+CMD ["python", "app.py"]
+EOF
+
+ 2001  docker build -t simple-python-app:latest .
+ 2002  docker run -d -p 5000:5000 --name python-app simple-python-app:latest
+ 2003  curl http://localhost:5000
+ 2004  curl http://localhost:5000/health
+ 2005  docker stop python-app && docker rm python-app
+ 2006  docker ps
+ 2007  docker network create jenkins
+ 2008  docker run -d   --name jenkins   --network jenkins   -p 8080:8080   -p 50000:50000   -v jenkins_home:/var/jenkins_home   -v /var/run/docker.sock:/var/run/docker.sock   jenkins/jenkins:lts
+ 2009  docker stop $(docker ps -aq)
+ 2010  docker system prune -a --volumes -f
+ 2011  docker run -d   --name jenkins   --network jenkins   -p 8080:8080   -p 50000:50000   -v jenkins_home:/var/jenkins_home   -v /var/run/docker.sock:/var/run/docker.sock   jenkins/jenkins:lts
+ 2012  docker network create jenkins
+ 2013  docker run -d   --name jenkins   --network jenkins   -p 8080:8080   -p 50000:50000   -v jenkins_home:/var/jenkins_home   -v /var/run/docker.sock:/var/run/docker.sock   jenkins/jenkins:lts
+ 2014  docker system prune -a --volumes -f
+ 2015  docker stop $(docker ps -aq)
+ 2016  docker ps
+ 2017  docker system prune -a --volumes -f
+ 2018  docker network create jenkins
+ 2019  docker run -d   --name jenkins   --network jenkins   -p 8080:8080   -p 50000:50000   -v jenkins_home:/var/jenkins_home   -v /var/run/docker.sock:/var/run/docker.sock   jenkins/jenkins:lts
+ 2020  sudo systemctl status jenkins
+ 2021  docker ps
+ 2022  docker stop $(docker ps -aq)
+ 2023  docker system prune -a --volumes -f
+ 2024  sudo systemctl status jenkins
+ 2025  docker network create jenkins1
+ 2026  docker run -d   --name jenkins1   --network jenkins   -p 8081:8080   -p 50000:50000   -v jenkins_home:/var/jenkins_home   -v /var/run/docker.sock:/var/run/docker.sock   jenkins/jenkins:latest
+ 2027  docker ps
+ 2028  docker ps -a
+ 2029  docker rm $(docker ps -aq)
+ 2030  docker run -d   --name jenkins --network jenkins1   -p 8081:8080   -p 50000:50000   -v jenkins_home:/var/jenkins_home   -v /var/run/docker.sock:/var/run/docker.sock   jenkins/jenkins:latest
+ 2031  docker ps
+ 2032  docker ps -a
+ 2033  docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
+ 2034  docker rm -f jenkins
+ 2035  docker volume rm jenkins_home
+ 2036  docker rm $(docker ps -aq)
+ 2037  docker stop $(docker ps -aq)
+ 2038  docker run -d   --name jenkins   --network jenkins1   -p 8081:8080   -p 50000:50000   -v jenkins_home:/var/jenkins_home   -v /var/run/docker.sock:/var/run/docker.sock   jenkins/jenkins:latest
+ 2039  docker ps
+ 2040  docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
+ 2041  docker exec -u root jenkins bash -c "
+  apt-get update &&
+  apt-get install -y docker.io &&
+  usermod -aG docker jenkins
+"
+ 2042  docker restart jenkins
+ 2043  docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
+ 2044  cat > Jenkinsfile << 'EOF'
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME = "simple-python-app"
+        IMAGE_TAG  = "latest"
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                echo 'Checking out code...'
+                checkout scm
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                echo 'Building Docker image...'
+                sh 'docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .'
+            }
+        }
+
+        stage('Run Container') {
+            steps {
+                echo 'Running container...'
+                sh '''
+                    docker stop ${IMAGE_NAME} || true
+                    docker rm ${IMAGE_NAME} || true
+                    docker run -d -p 5000:5000 --name ${IMAGE_NAME} ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                echo 'Running health check...'
+                sh 'sleep 3 && curl -f http://localhost:5000/health'
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Pipeline completed successfully!'
+        }
+        failure {
+            echo 'Pipeline failed.'
+        }
+    }
+}
+EOF
+
+ 2045  git add .
+ 2046  git commit -m "initial commit - simple python app"
+ 2047  cd ..
+ 2048  git add .
+ 2049  git commit -m "new app "
+ 2050  git push origin master
+ 2051  # Give jenkins user access to docker socket
+ 2052  docker exec -u root jenkins chmod 666 /var/run/docker.sock
+ 2053  docker exec -it jenkins bash
+ 2054  cd simple-python-app
+ 2055  cat > test_app.py << 'EOF'
+import pytest
+from app import app
+
+@pytest.fixture
+def client():
+    app.config['TESTING'] = True
+    with app.test_client() as client:
+        yield client
+
+def test_home(client):
+    response = client.get('/')
+    assert response.status_code == 200
+    assert b'Hello from Python App' in response.data
+
+def test_health(client):
+    response = client.get('/health')
+    assert response.status_code == 200
+EOF
+
+ 2056  cat > requirements.txt << 'EOF'
+flask==3.0.3
+pytest==8.3.3
+EOF
+
+ 2057  docker exec -u root jenkins bash -c "
+  apt-get update &&
+  apt-get install -y wget apt-transport-https gnupg &&
+  wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | apt-key add - &&
+  echo 'deb https://aquasecurity.github.io/trivy-repo/deb generic main' > /etc/apt/sources.list.d/trivy.list &&
+  apt-get update &&
+  apt-get install -y trivy
+"
+ 2058  docker run -d   --name sonarqube   --network jenkins   -p 9000:9000   -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true   sonarqube:lts-community
+ 2059  docker run -d   --name sonarqube   --network jenkins1   -p 9000:9000   -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true   sonarqube:lts-community
+ 2060  docker docker stop $(docker ps -aq)
+ 2061  docker stop $(docker ps -aq)
+ 2062  docker ps
+ 2063  docker ps -a
+ 2064  docker restart aa57395767a0
+ 2065  docker rm a44c47dafec3
+ 2066  docker run -d   --name sonarqube   --network jenkins1   -p 9000:9000   -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true   sonarqube:lts-community
+ 2067  docker ps
+ 2068  docker ps -a
+ 2069  docker rm 0f280845adc9
+ 2070  docker ps
+ 2071  cd ../../
+ 2072  cd DevSecOps/
+ 2073  git add .
+ 2074  git commit -m "update"
+ 2075  git push origin master 
+ 2076  docker exec -it jenkins bash
+ 2077  docker exec -u root -it jenkins bash
+ 2078  mkdir -p ~/Videos/DevSecops/DevSecOps/simple-node-app && cd ~/Videos/DevSecops/DevSecOps/simple-node-app
+ 2079  cat > app.js << 'EOF'
+const express = require('express');
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+    res.send('Hello from Node App - v1.0');
+});
+
+app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'ok' });
+});
+
+if (require.main === module) {
+    app.listen(PORT, '0.0.0.0', () => {
+        console.log(`Server running on port ${PORT}`);
+    });
+}
+
+module.exports = app;
+EOF
+
+ 2080  cat > package.json << 'EOF'
+{
+  "name": "simple-node-app",
+  "version": "1.0.0",
+  "description": "Simple Node.js app for DevSecOps",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "test": "jest --coverage"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^6.3.4"
+  }
+}
+EOF
+
+ 2081  mkdir -p tests
+ 2082  cat > tests/app.test.js << 'EOF'
+const request = require('supertest');
+const app = require('../app');
+
+describe('GET /', () => {
+    it('should return 200 and hello message', async () => {
+        const res = await request(app).get('/');
+        expect(res.statusCode).toBe(200);
+        expect(res.text).toContain('Hello from Node App');
+    });
+});
+
+describe('GET /health', () => {
+    it('should return 200 and status ok', async () => {
+        const res = await request(app).get('/health');
+        expect(res.statusCode).toBe(200);
+        expect(res.body.status).toBe('ok');
+    });
+});
+EOF
+
+ 2083  cat > Dockerfile << 'EOF'
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install --production
+
+COPY app.js .
+
+EXPOSE 3000
+
+CMD ["node", "app.js"]
+EOF
+
+ 2084  npm install
+ 2085  docker build -t simple-node-app:latest .
+ 2086  docker run -d -p 3000:3000 --name simple-node-app simple-node-app:latest
+ 2087  docker stop simple-node-app && docker rm simple-node-app
+ 2088  cat > Jenkinsfile << 'EOF'
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME = "simple-node-app"
+        IMAGE_TAG  = "latest"
+        SONAR_URL  = "http://sonarqube:9000"
+        APP_PORT   = "3000"
+    }
+
+    stages {
+
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+
+        stage('Checkout') {
+            steps {
+                echo 'Checking out code...'
+                sh 'git clone https://github.com/vanshPadia/DevSecOps.git .'
+            }
+        }
+
+        stage('Unit Test') {
+            steps {
+                echo 'Running Jest unit tests...'
+                sh '''
+                    cd simple-node-app
+                    npm install
+                    npm test
+                '''
+            }
+        }
+
+        stage('OWASP Dependency Check') {
+            steps {
+                echo 'Running OWASP Dependency Check...'
+                sh '''
+                    mkdir -p ${WORKSPACE}/owasp-report-node
+                    docker run --rm \
+                      -v ${WORKSPACE}/simple-node-app:/src \
+                      -v ${WORKSPACE}/owasp-report-node:/report \
+                      owasp/dependency-check \
+                      --scan /src \
+                      --format HTML \
+                      --out /report \
+                      --project simple-node-app
+                '''
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                echo 'Running SonarQube analysis...'
+                withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                    sh '''
+                        docker run --rm \
+                          --network jenkins \
+                          -e SONAR_HOST_URL=${SONAR_URL} \
+                          -e SONAR_TOKEN=${SONAR_TOKEN} \
+                          -v ${WORKSPACE}/simple-node-app:/usr/src \
+                          sonarsource/sonar-scanner-cli \
+                          -Dsonar.projectKey=simple-node-app \
+                          -Dsonar.sources=. \
+                          -Dsonar.exclusions=node_modules/**,tests/**
+                    '''
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                echo 'Building Docker image...'
+                sh '''
+                    cd simple-node-app
+                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                '''
+            }
+        }
+
+        stage('Trivy Image Scan') {
+            steps {
+                echo 'Scanning image with Trivy...'
+                sh '''
+                    trivy image \
+                      --exit-code 0 \
+                      --severity HIGH,CRITICAL \
+                      --format table \
+                      ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                echo 'Deploying container...'
+                sh '''
+                    docker stop ${IMAGE_NAME} || true
+                    docker rm ${IMAGE_NAME} || true
+                    docker run -d \
+                      --network jenkins \
+                      -p ${APP_PORT}:${APP_PORT} \
+                      --name ${IMAGE_NAME} \
+                      ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+
+        stage('OWASP ZAP - DAST') {
+            steps {
+                echo 'Running OWASP ZAP DAST scan...'
+                sh '''
+                    mkdir -p ${WORKSPACE}/zap-report
+                    docker run --rm \
+                      --network jenkins \
+                      -v ${WORKSPACE}/zap-report:/zap/wrk \
+                      ghcr.io/zaproxy/zaproxy:stable \
+                      zap-baseline.py \
+                      -t http://${IMAGE_NAME}:${APP_PORT} \
+                      -r zap-report.html \
+                      -I
+                '''
+            }
+        }
+
+    }
+
+    post {
+        success {
+            echo 'Pipeline completed - app running on port 3000'
+        }
+        failure {
+            echo 'Pipeline failed - check logs above'
+        }
+    }
+}
+EOF
+
+ 2089  cd ~/Videos/DevSecops/DevSecOps
+ 2090  git add simple-node-app/
+ 2091  git commit -m "add simple-node-app with SAST and DAST pipeline"
+ 2092  git push
+ 2093  docker exec -u root jenkins bash -c "
+  apt-get update &&
+  apt-get install -y curl &&
+  curl -fsSL https://deb.nodesource.com/setup_20.x | bash - &&
+  apt-get install -y nodejs
+"
+ 2094  docker exec jenkins node --version
+ 2095  docker exec jenkins npm --version
+ 2096  docker exec -u root jenkins bash -c "
+  apt-get update &&
+  apt-get install -y python3-pip python3 &&
+  pip3 install flask pytest --break-system-packages
+"
+ 2097  git add .
+ 2098  git commit -m "update"
+ 2099  git push origin master
+ 2100  git add .
+ 2101  git commit -m "update"
+ 2102  git push origin master
+ 2103  docker ps
+ 2104  docker logs c159ca6eb1a9
+ 2105  docker logs aa57395767a0
+ 2106  docker logs c159ca6eb1a9
+ 2107  docker 
+ 2108  docker ps
+ 2109  docker exec -u root -it jenkins bash
+ 2110  history
+vansh.padia@IBS-LAP-061:~/Videos/DevSecops/DevSecOps$ 
