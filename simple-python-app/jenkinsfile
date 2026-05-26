@@ -1,0 +1,117 @@
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME = "simple-python-app"
+        IMAGE_TAG  = "latest"
+        SONAR_URL  = "http://sonarqube:9000"
+    }
+
+    stages {
+
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+
+        stage('Checkout') {
+            steps {
+                echo 'Checking out code...'
+                sh 'git clone https://github.com/vanshPadia/DevSecOps.git .'
+            }
+        }
+
+        stage('Unit Test') {
+            steps {
+                echo 'Running unit tests...'
+                sh '''
+                    cd simple-python-app
+                    pip install -r requirements.txt --break-system-packages
+                    pytest test_app.py -v --tb=short
+                '''
+            }
+        }
+
+        stage('OWASP Dependency Check') {
+            steps {
+                echo 'Running OWASP Dependency Check...'
+                sh '''
+                    mkdir -p ${WORKSPACE}/owasp-report
+                    docker run --rm \
+                      -v ${WORKSPACE}/simple-python-app:/src \
+                      -v ${WORKSPACE}/owasp-report:/report \
+                      owasp/dependency-check \
+                      --scan /src \
+                      --format HTML \
+                      --out /report \
+                      --project simple-python-app
+                '''
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                echo 'Running SonarQube analysis...'
+                withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                    sh '''
+                        docker run --rm \
+                          --network jenkins \
+                          -e SONAR_HOST_URL=${SONAR_URL} \
+                          -e SONAR_TOKEN=${SONAR_TOKEN} \
+                          -v ${WORKSPACE}/simple-python-app:/usr/src \
+                          sonarsource/sonar-scanner-cli \
+                          -Dsonar.projectKey=simple-python-app \
+                          -Dsonar.sources=.
+                    '''
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                echo 'Building Docker image...'
+                sh '''
+                    cd simple-python-app
+                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                '''
+            }
+        }
+
+        stage('Trivy Image Scan') {
+            steps {
+                echo 'Scanning image with Trivy...'
+                sh '''
+                    trivy image \
+                      --exit-code 0 \
+                      --severity HIGH,CRITICAL \
+                      --format table \
+                      ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                echo 'Deploying container...'
+                sh '''
+                    docker stop ${IMAGE_NAME} || true
+                    docker rm ${IMAGE_NAME} || true
+                    docker run -d \
+                      -p 5000:5000 \
+                      --name ${IMAGE_NAME} \
+                      ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Pipeline completed successfully - app is running on port 5000'
+        }
+        failure {
+            echo 'Pipeline failed - check logs above'
+        }
+    }
+}
