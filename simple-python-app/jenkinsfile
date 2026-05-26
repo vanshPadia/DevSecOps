@@ -27,8 +27,8 @@ pipeline {
                 echo 'Running unit tests...'
                 sh '''
                     cd simple-python-app
-                    pip install -r requirements.txt --break-system-packages
-                    pytest test_app.py -v --tb=short
+                    pip3 install -r requirements.txt --break-system-packages
+                    python3 -m pytest test_app.py -v --tb=short
                 '''
             }
         }
@@ -38,9 +38,13 @@ pipeline {
                 echo 'Running OWASP Dependency Check...'
                 sh '''
                     mkdir -p ${WORKSPACE}/owasp-report
+                    chmod 777 ${WORKSPACE}/owasp-report
+                    mkdir -p ${WORKSPACE}/owasp-data
+                    chmod 777 ${WORKSPACE}/owasp-data
                     docker run --rm \
                       -v ${WORKSPACE}/simple-python-app:/src \
                       -v ${WORKSPACE}/owasp-report:/report \
+                      -v ${WORKSPACE}/owasp-data:/usr/share/dependency-check/data \
                       owasp/dependency-check \
                       --scan /src \
                       --format HTML \
@@ -56,7 +60,7 @@ pipeline {
                 withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
                     sh '''
                         docker run --rm \
-                          --network jenkins \
+                          --network jenkins1 \
                           -e SONAR_HOST_URL=${SONAR_URL} \
                           -e SONAR_TOKEN=${SONAR_TOKEN} \
                           -v ${WORKSPACE}/simple-python-app:/usr/src \
@@ -98,9 +102,20 @@ pipeline {
                     docker stop ${IMAGE_NAME} || true
                     docker rm ${IMAGE_NAME} || true
                     docker run -d \
+                      --network jenkins1 \
                       -p 5000:5000 \
                       --name ${IMAGE_NAME} \
                       ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                echo 'Running health check...'
+                sh '''
+                    sleep 5
+                    curl -f http://localhost:5000/health
                 '''
             }
         }
@@ -108,7 +123,7 @@ pipeline {
 
     post {
         success {
-            echo 'Pipeline completed successfully - app is running on port 5000'
+            echo 'Pipeline completed successfully - app running on port 5000'
         }
         failure {
             echo 'Pipeline failed - check logs above'
