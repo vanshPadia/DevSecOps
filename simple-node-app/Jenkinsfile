@@ -1,0 +1,138 @@
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME = "simple-node-app"
+        IMAGE_TAG  = "latest"
+        SONAR_URL  = "http://sonarqube:9000"
+        APP_PORT   = "3000"
+    }
+
+    stages {
+
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+
+        stage('Checkout') {
+            steps {
+                echo 'Checking out code...'
+                sh 'git clone https://github.com/vanshPadia/DevSecOps.git .'
+            }
+        }
+
+        stage('Unit Test') {
+            steps {
+                echo 'Running Jest unit tests...'
+                sh '''
+                    cd simple-node-app
+                    npm install
+                    npm test
+                '''
+            }
+        }
+
+        stage('OWASP Dependency Check') {
+            steps {
+                echo 'Running OWASP Dependency Check...'
+                sh '''
+                    mkdir -p ${WORKSPACE}/owasp-report-node
+                    docker run --rm \
+                      -v ${WORKSPACE}/simple-node-app:/src \
+                      -v ${WORKSPACE}/owasp-report-node:/report \
+                      owasp/dependency-check \
+                      --scan /src \
+                      --format HTML \
+                      --out /report \
+                      --project simple-node-app
+                '''
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                echo 'Running SonarQube analysis...'
+                withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                    sh '''
+                        docker run --rm \
+                          --network jenkins \
+                          -e SONAR_HOST_URL=${SONAR_URL} \
+                          -e SONAR_TOKEN=${SONAR_TOKEN} \
+                          -v ${WORKSPACE}/simple-node-app:/usr/src \
+                          sonarsource/sonar-scanner-cli \
+                          -Dsonar.projectKey=simple-node-app \
+                          -Dsonar.sources=. \
+                          -Dsonar.exclusions=node_modules/**,tests/**
+                    '''
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                echo 'Building Docker image...'
+                sh '''
+                    cd simple-node-app
+                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                '''
+            }
+        }
+
+        stage('Trivy Image Scan') {
+            steps {
+                echo 'Scanning image with Trivy...'
+                sh '''
+                    trivy image \
+                      --exit-code 0 \
+                      --severity HIGH,CRITICAL \
+                      --format table \
+                      ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                echo 'Deploying container...'
+                sh '''
+                    docker stop ${IMAGE_NAME} || true
+                    docker rm ${IMAGE_NAME} || true
+                    docker run -d \
+                      --network jenkins \
+                      -p ${APP_PORT}:${APP_PORT} \
+                      --name ${IMAGE_NAME} \
+                      ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+
+        stage('OWASP ZAP - DAST') {
+            steps {
+                echo 'Running OWASP ZAP DAST scan...'
+                sh '''
+                    mkdir -p ${WORKSPACE}/zap-report
+                    docker run --rm \
+                      --network jenkins \
+                      -v ${WORKSPACE}/zap-report:/zap/wrk \
+                      ghcr.io/zaproxy/zaproxy:stable \
+                      zap-baseline.py \
+                      -t http://${IMAGE_NAME}:${APP_PORT} \
+                      -r zap-report.html \
+                      -I
+                '''
+            }
+        }
+
+    }
+
+    post {
+        success {
+            echo 'Pipeline completed - app running on port 3000'
+        }
+        failure {
+            echo 'Pipeline failed - check logs above'
+        }
+    }
+}
